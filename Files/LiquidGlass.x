@@ -149,21 +149,27 @@ static float YMSeekStartValue;
 %property (nonatomic, retain) UIPanGestureRecognizer *ymSeekPan;
 - (void)didMoveToWindow {
     %orig;
-    if (self.window && !self.ymSeekPan) {
+    BOOL seekEnabled = IS_ENABLED(SeekOnOverlay);
+    if (self.window && seekEnabled && !self.ymSeekPan) {
         self.ymSeekPan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(YouModHandleSeekPan:)];
         self.ymSeekPan.delegate = (id<UIGestureRecognizerDelegate>)self;
         self.ymSeekPan.cancelsTouchesInView = NO;
         [self addGestureRecognizer:self.ymSeekPan];
     }
+    if (self.ymSeekPan) {
+        self.ymSeekPan.enabled = seekEnabled;
+    }
 }
 %new
 - (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)gesture {
     if (gesture != self.ymSeekPan) return YES;
+    if (!IS_ENABLED(SeekOnOverlay)) return NO;
     CGPoint velocity = [(UIPanGestureRecognizer *)gesture velocityInView:self];
     return fabs(velocity.x) > fabs(velocity.y);
 }
 %new
 - (void)YouModHandleSeekPan:(UIPanGestureRecognizer *)gesture {
+    if (!IS_ENABLED(SeekOnOverlay)) return;
     UISlider *slider = self.scrubberView.scrubber;
     if (!slider) return;
     float duration = slider.maximumValue - slider.minimumValue;

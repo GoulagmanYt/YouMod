@@ -380,7 +380,7 @@ void YouModRemoveDrawerAds(YTELMViewController *self) {
     if (coll == nil) return;
     _ASCollectionViewCell *premiumCell = nil;
     for (_ASCollectionViewCell *vc in coll.subviews) {
-        if ([vc isKindOfClass:%c(_ASCollectionViewCell)]) {
+        if ([vc isKindOfClass:%c(_ASCollectionViewCell)] && vc.subviews.count > 0) {
             UIView *svtemp = vc.subviews[0];
             while (svtemp != nil && svtemp.subviews.count == 1) {
                 svtemp = svtemp.subviews[0];
@@ -443,8 +443,9 @@ void YouModRemoveDrawerAds(YTELMViewController *self) {
     if (orig && orig.count > 0) {
         for (YTSettingsSectionItem *item in orig) {
             if ([item.categoryId integerValue] == 31) {
-                [orig removeObject:item];
-                break;
+                NSMutableArray <YTSettingsSectionItem *> *mutableItems = [orig mutableCopy];
+                [mutableItems removeObject:item];
+                return [mutableItems copy];
             }
         }
     }

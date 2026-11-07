@@ -214,7 +214,7 @@
 - (void)layoutSubviews {
     %orig;
     if (IS_ENABLED(HideInfoButtonPanel) && self.informationButton != nil) self.informationButton.hidden = YES;
-    if (IS_ENABLED(HideSortFilerPanel) && self.sortFilterMenuButton != nil) self.sortFilterMenuButton.hidden = YES;
+    if (IS_ENABLED(HideSortFilterPanel) && self.sortFilterMenuButton != nil) self.sortFilterMenuButton.hidden = YES;
     for (UIView *button in self.subviews) {
         if ([button isKindOfClass:%c(YTQTMButton)]) {
             YTIButtonRenderer *renderer = [button valueForKey:@"_buttonRenderer"];

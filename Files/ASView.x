@@ -6,9 +6,9 @@ static const void *kASViewKey = &kASViewKey;
 - (void)didMoveToWindow {
     %orig;
     if (!self.window) return;
-    // YouModFilterVideoButtons(self, iden); not working well yet
     if (objc_getAssociatedObject(self, kASViewKey)) return;
     NSString *iden = self.accessibilityIdentifier;
+    YouModFilterVideoButtons(self, iden);
     YouModApplyOLEDToDisplayView(self, iden);
     YouModConfigureDownloadButton(self, iden);
     YouModSetupDownloadGestures(self, iden);

@@ -159,15 +159,23 @@ static NSArray<YMSettingsItem *> *YMPreferencesItems(void) {
             });
 
             dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+                NSFileManager *fm = [NSFileManager defaultManager];
                 NSString *cachePath = NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES).firstObject;
-                [[NSFileManager defaultManager] removeItemAtPath:cachePath error:nil];
+                if (cachePath) {
+                    NSArray<NSString *> *contents = [fm contentsOfDirectoryAtPath:cachePath error:nil];
+                    for (NSString *item in contents) {
+                        NSString *itemPath = [cachePath stringByAppendingPathComponent:item];
+                        [fm removeItemAtPath:itemPath error:nil];
+                    }
+                }
+                NSString *updatedSize = GetCacheSize();
                 dispatch_async(dispatch_get_main_queue(), ^{
                     __strong UIViewController *strongVC = weakVC;
                     if (!strongVC) return;
                     if ([strongVC respondsToSelector:@selector(tableView)]) {
                         UITableView *tableView = [(id)strongVC tableView];
                         for (UITableViewCell *cell in tableView.visibleCells) {
-                            if ([cell.textLabel.text isEqualToString:YMLOC(@"CLEARCACHE")]) {
+                            if ([cell.textLabel.text isEqualToString:clearTitle]) {
                                 cell.accessoryView = nil;
                                 break;
                             }
@@ -177,7 +185,7 @@ static NSArray<YMSettingsItem *> *YMPreferencesItems(void) {
                         NSArray *items = [(id)strongVC items];
                         for (id item in items) {
                             if ([[item title] isEqualToString:clearTitle]) {
-                                [item setSubtitle:@"0 KB"];
+                                [item setSubtitle:updatedSize];
                                 break;
                             }
                         }
@@ -418,7 +426,7 @@ static NSArray<YMSettingsItem *> *YMPreferencesItems(void) {
             YMToggle(YMLOC(@"HIDE_ENGAGEMENT_SUBBAR"), YMLOC(@"HIDE_ENGAGEMENT_SUBBAR_DESC"), HideEngagementSubbar),
             YMToggle(YMLOC(@"HIDE_INFO_BUTTON_PANEL"), YMLOC(@"HIDE_INFO_BUTTON_PANEL_DESC"), HideInfoButtonPanel),
             YMToggle(YMLOC(@"HIDE_COMMUNITY_BUTTON_PANEL"), YMLOC(@"HIDE_COMMUNITY_BUTTON_PANEL_DESC"), HideCommunityButtonPanel),
-            YMToggle(YMLOC(@"HIDE_SORT_FILTER_PANEL"), YMLOC(@"HIDE_SORT_FILTER_PANEL_DESC"), HideSortFilerPanel),
+            YMToggle(YMLOC(@"HIDE_SORT_FILTER_PANEL"), YMLOC(@"HIDE_SORT_FILTER_PANEL_DESC"), HideSortFilterPanel),
             YMToggle(YMLOC(@"FLOATING_KEYBOARD"), YMLOC(@"FLOATING_KEYBOARD_DESC"), FloatingKeyboard),
             YMToggle(YMLOC(@"DISABLES_RTL"), YMLOC(@"DISABLES_RTL_DESC"), DisablesRTL),
             YMHeader(@""),

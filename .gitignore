@@ -3,3 +3,5 @@ modules/
 packages/
 .cache/
 .theos/
+/.serena
+Skills/

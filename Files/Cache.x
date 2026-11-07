@@ -4,8 +4,14 @@
 %hook YTAppDelegate
 %new
 - (void)YouModAutoClearCache {
+    NSFileManager *fm = [NSFileManager defaultManager];
     NSString *cachePath = NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES).firstObject;
-    [[NSFileManager defaultManager] removeItemAtPath:cachePath error:nil];
+    if (!cachePath) return;
+    NSArray<NSString *> *contents = [fm contentsOfDirectoryAtPath:cachePath error:nil];
+    for (NSString *item in contents) {
+        NSString *itemPath = [cachePath stringByAppendingPathComponent:item];
+        [fm removeItemAtPath:itemPath error:nil];
+    }
 }
 - (BOOL)application:(id)application didFinishLaunchingWithOptions:(id)launchOptions {
     if (IS_ENABLED(AutoClearCache)) {

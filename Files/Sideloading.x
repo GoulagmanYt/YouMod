@@ -13,9 +13,10 @@ static NSString *accessGroupID() {
     OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query, (CFTypeRef *)&result);
     if (status == errSecItemNotFound) {
         status = SecItemAdd((__bridge CFDictionaryRef)query, (CFTypeRef *)&result);
-        if (status != errSecSuccess) return nil;
     }
+    if (status != errSecSuccess || result == nil) return nil;
     NSString *accessGroup = [(__bridge NSDictionary *)result objectForKey:(__bridge NSString *)kSecAttrAccessGroup];
+    CFRelease(result);
     return accessGroup;
 }
 
@@ -152,9 +153,13 @@ static NSString *accessGroupID() {
 %hook NSFileManager
 - (NSURL *)containerURLForSecurityApplicationGroupIdentifier:(NSString *)groupIdentifier {
     if (groupIdentifier != nil) {
-        NSArray *paths = [[NSFileManager defaultManager] URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask];
+        NSArray *paths = [self URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask];
         NSURL *documentsURL = [paths lastObject];
-        return [documentsURL URLByAppendingPathComponent:@"AppGroup"];
+        NSURL *appGroupURL = [documentsURL URLByAppendingPathComponent:@"AppGroup" isDirectory:YES];
+        if (appGroupURL && ![self fileExistsAtPath:appGroupURL.path]) {
+            [self createDirectoryAtURL:appGroupURL withIntermediateDirectories:YES attributes:nil error:nil];
+        }
+        return appGroupURL;
     }
     return %orig;
 }

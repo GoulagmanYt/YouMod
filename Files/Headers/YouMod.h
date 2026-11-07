@@ -289,7 +289,8 @@
 #define HideEngagementSubbar @"YouModHideEngagementSubbar"
 #define HideInfoButtonPanel @"YouModHideInfoButtonPanel"
 #define HideCommunityButtonPanel @"YouModHideCommunityButtonPanel"
-#define HideSortFilerPanel @"YouModHideSortFilterPanel"
+#define HideSortFilterPanel @"YouModHideSortFilterPanel"
+#define HideSortFilerPanel HideSortFilterPanel
 #define DisablesRTL @"YouModDisablesRTL"
 #define DeviceUIIndex @"YouModDeviceUIIndex"
 #define FloatingKeyboard @"YouModFloatingKeyboard"
