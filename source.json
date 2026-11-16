@@ -8,19 +8,19 @@
       "bundleIdentifier": "com.google.ios.youtube",
       "developerName": "GoulagmanYt",
       "subtitle": "YouTube + YouMod",
-      "localizedDescription": "YouTube 21.39.4 + YouMod 2.1.0",
+      "localizedDescription": "YouTube 21.46.3 + YouMod 2.1.0",
       "iconURL": "https://raw.githubusercontent.com/GoulagmanYt/YouMod/HEAD/Icon.png",
-      "version": "21.39.4.7",
+      "version": "21.46.3.8",
       "versionDate": "2026-11-16",
-      "downloadURL": "https://github.com/GoulagmanYt/YouMod/releases/download/youmod-ipa7/YouMod_21.39.4_v2.1.0.ipa",
-      "size": 159456794,
+      "downloadURL": "https://github.com/GoulagmanYt/YouMod/releases/download/youmod-ipa8/YouMod_21.46.3_v2.1.0.ipa",
+      "size": 158452148,
       "versions": [
         {
-          "version": "21.39.4.7",
+          "version": "21.46.3.8",
           "date": "2026-11-16",
-          "localizedDescription": "YouTube 21.39.4 + YouMod 2.1.0",
-          "downloadURL": "https://github.com/GoulagmanYt/YouMod/releases/download/youmod-ipa7/YouMod_21.39.4_v2.1.0.ipa",
-          "size": 159456794,
+          "localizedDescription": "YouTube 21.46.3 + YouMod 2.1.0",
+          "downloadURL": "https://github.com/GoulagmanYt/YouMod/releases/download/youmod-ipa8/YouMod_21.46.3_v2.1.0.ipa",
+          "size": 158452148,
           "minOSVersion": "14.0"
         }
       ]
