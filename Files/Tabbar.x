@@ -1,32 +1,34 @@
 #import "Headers.h"
 
-static NSString * const kYMLibraryPivotIdentifier = @"YouModDownloadLibrary";
+extern UIViewController *YouModAppViewController();
+
+static NSString *const kYMLibraryPivotIdentifier = @"YouModDownloadLibrary";
 
 // Tab icons
 %hook YTAppPivotBarItemStyle
 - (UIImage *)pivotBarItemIconImageWithIconType:(int)type color:(UIColor *)color useNewIcons:(BOOL)isNew selected:(BOOL)isSelected {
-    if (type >= 1 && type <= 18) {
-        NSString *imageName;
-        if (type == 1) imageName = isSelected ? @"icons/history_selected" : @"icons/history";
-        else if (type == 2) imageName = isSelected ? @"icons/gaming_selected" : @"icons/gaming";
-        else if (type == 3) imageName = isSelected ? @"icons/sports_selected" : @"icons/sports";
-        else if (type == 4) imageName = isSelected ? @"icons/noti_selected" : @"icons/noti";
-        else if (type == 5) imageName = isSelected ? @"icons/news_selected" : @"icons/news";
-        else if (type == 6) imageName = isSelected ? @"icons/music_selected" : @"icons/music";
-        else if (type == 7) imageName = isSelected ? @"icons/watchlater_selected" : @"icons/watchlater";
-        else if (type == 8) imageName = isSelected ? @"icons/playlist_selected" : @"icons/playlist";
-        else if (type == 9) imageName = isSelected ? @"icons/like_selected" : @"icons/like";
-        else if (type == 10) imageName = isSelected ? @"icons/live_selected" : @"icons/live";
-        else if (type == 11) imageName = isSelected ? @"icons/post_selected" : @"icons/post";
-        else if (type == 12) imageName = isSelected ? @"icons/video_selected" : @"icons/video";
-        else if (type == 13) imageName = isSelected ? @"icons/movie_selected" : @"icons/movie";
-        else if (type == 14) imageName = isSelected ? @"icons/course_selected" : @"icons/course";
-        else if (type == 15) imageName = isSelected ? @"icons/minigame_selected" : @"icons/minigame";
-        else if (type == 16) imageName = isSelected ? @"icons/fashion_selected" : @"icons/fashion";
-        else if (type == 17) imageName = isSelected ? @"icons/learning_selected" : @"icons/learning";
-        else if (type == 18) imageName = isSelected ? @"icons/download_selected" : @"icons/download";
-        YTAssetLoader *al = [[%c(YTAssetLoader) alloc] initWithBundle:YouModBundle()];
-        return [al imageNamed:imageName];
+    if (type >= 1 && type <= 19) {
+        NSString *iconName;
+        if (type == 1) iconName = @"history";
+        else if (type == 2) iconName = @"gaming";
+        else if (type == 3) iconName = @"sports";
+        else if (type == 4) iconName = @"noti";
+        else if (type == 5) iconName = @"news";
+        else if (type == 6) iconName = @"music";
+        else if (type == 7) iconName = @"watchlater";
+        else if (type == 8) iconName = @"playlist";
+        else if (type == 9) iconName = @"like";
+        else if (type == 10) iconName = @"live";
+        else if (type == 11) iconName = @"post";
+        else if (type == 12) iconName = @"video";
+        else if (type == 13) iconName = @"movie";
+        else if (type == 14) iconName = @"course";
+        else if (type == 15) iconName = @"minigame";
+        else if (type == 16) iconName = @"fashion";
+        else if (type == 17) iconName = @"learning";
+        else if (type == 18) iconName = @"download";
+        else if (type == 19) iconName = @"charts";
+        return [YMIconProvider tabIcon:iconName selected:isSelected];
     }
     return %orig;
 }
@@ -55,6 +57,7 @@ static NSString *ymPivotIDForTabID(NSString *tabID) {
     else if ([tabID isEqualToString:@"minigame"]) return @"FEmini_app_destination";
     else if ([tabID isEqualToString:@"fashion"]) return @"UCrpQ4p1Ql_hG8rKXIKM1MOQ";
     else if ([tabID isEqualToString:@"learning"]) return [%c(YTIBrowseRequest) browseIDForLearningDestination];
+    else if ([tabID isEqualToString:@"charts"]) return @"FEhype_leaderboard";
     return nil;
 }
 
@@ -76,6 +79,7 @@ static NSInteger ymIconTypeForTabID(NSString *tabID) {
     else if ([tabID isEqualToString:@"minigame"]) return 15;
     else if ([tabID isEqualToString:@"fashion"]) return 16;
     else if ([tabID isEqualToString:@"learning"]) return 17;
+    else if ([tabID isEqualToString:@"charts"]) return 19;
     return 0;
 }
 
@@ -97,6 +101,7 @@ static NSString *ymTitleForTabID(NSString *tabID) {
     else if ([tabID isEqualToString:@"minigame"]) return LOC(@"MINIGAME_TAB");
     else if ([tabID isEqualToString:@"fashion"]) return LOC(@"FASHION_TAB");
     else if ([tabID isEqualToString:@"learning"]) return LOC(@"LEARNING_TAB");
+    else if ([tabID isEqualToString:@"charts"]) return LOC(@"CHARTS_TAB");
     return nil;
 }
 
@@ -104,11 +109,11 @@ static BOOL isNewYTTabbarLayout = NO;
 
 static YTIPivotBarSupportedRenderers *YouModNewTab(NSString *pivotID, NSString *title, int it) {
     YTIPivotBarSupportedRenderers *tab = [%c(YTIPivotBarSupportedRenderers) new];
-    if (isNewYTTabbarLayout) {
+    if (isNewYTTabbarLayout && [tab.pivotBarIconOnlyItemRenderer respondsToSelector:@selector(setBackgroundStyle:)]) {
         tab.pivotBarIconOnlyItemRenderer.pivotIdentifier = pivotID;
         tab.pivotBarIconOnlyItemRenderer.navigationEndpoint.browseEndpoint.browseId = pivotID;
         tab.pivotBarIconOnlyItemRenderer.icon.iconType = it;
-        if ([tab.pivotBarIconOnlyItemRenderer respondsToSelector:@selector(setBackgroundStyle:)]) tab.pivotBarIconOnlyItemRenderer.backgroundStyle = 1; // absent on older builds
+        tab.pivotBarIconOnlyItemRenderer.backgroundStyle = 1;
     } else {
         tab.pivotBarItemRenderer.pivotIdentifier = pivotID;
         tab.pivotBarItemRenderer.navigationEndpoint.browseEndpoint.browseId = pivotID;
@@ -242,13 +247,11 @@ static YTIPivotBarSupportedRenderers *YouModNewTab(NSString *pivotID, NSString *
 }
 %end
 
-/*
 // Hide Tab Bar Indicators
 %hook YTPivotBarIndicatorView
 - (void)setFillColor:(UIColor *)color { %orig(IS_ENABLED(HideTabIndi) ? [UIColor clearColor] : color); }
 - (void)setBorderColor:(UIColor *)color { %orig(IS_ENABLED(HideTabIndi) ? [UIColor clearColor] : color); }
 %end
-*/
 
 static NSString *gLastOpenedVideoID = nil;
 
@@ -257,7 +260,7 @@ static void YMOpenLinkFromClipboard(UIViewController *presentingVC, BOOL isRunti
     if (![pasteboard hasStrings]) return;
 
     NSString *rawString = [pasteboard.string stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-    NSString *videoID = YMExtractYouTubeVideoID(rawString);
+    NSString *videoID = [YMHelpers extractYouTubeVideoID:rawString];
     if (!videoID || videoID.length == 0) return;
     else if (gLastOpenedVideoID && [gLastOpenedVideoID isEqualToString:videoID] && IS_ENABLED(AutoOpenLink) && !isRuntime) return;
 
@@ -308,13 +311,13 @@ static BOOL isGestureRegistered = NO;
                                                      image:[UIImage systemImageNamed:@"dock.rectangle"]
                                                 identifier:nil
                                                    handler:^(__kindof UIAction * _Nonnull action) {
-            YMPresentTabOrderModally(nil);
+            YMPresentTabOrder(nil);
         }];
         UIAction *openLinkAction = [UIAction actionWithTitle:LOC(@"OPEN_LINK")
                                                image:[UIImage systemImageNamed:@"link"]
                                           identifier:nil
                                              handler:^(__kindof UIAction * _Nonnull action) {
-            UIViewController *topVC = YouModTopViewController(nil);
+            UIViewController *topVC = [YMHelpers topViewController:nil];
             YMOpenLinkFromClipboard(topVC, YES);
         }];
         UIAction *sleepTimerAction = nil;
@@ -334,7 +337,6 @@ static BOOL isGestureRegistered = NO;
         return [UIMenu menuWithTitle:@"" children:menuChildren];
     }];
 }
-- (void)setIndicatorDot:(UIView *)indicatorDot { if (!IS_ENABLED(HideTabIndi)) %orig; }
 %end
 
 // Startup Tab
@@ -382,8 +384,9 @@ static BOOL isTabSelected = NO;
     %orig;
     sbUpdateOverlayInsetForPivotBar();
     if (IS_ENABLED(ShortsOnly) && !isTabSelected) {
-        [self selectItemWithPivotIdentifier:@"FEshorts"];
         isTabSelected = YES;
+        [self selectItemWithPivotIdentifier:@"FEshorts"];
+        [YouModAppViewController() performSelector:@selector(hidePivotBar)];
         return;
     }
     if (!isTabSelected) {
@@ -434,7 +437,7 @@ static BOOL isTabSelected = NO;
 - (void)sceneDidBecomeActive:(UIScene *)scene {
     %orig;
     if (IS_ENABLED(AutoOpenLink)) {
-        UIViewController *topVC = YouModTopViewController(nil);
+        UIViewController *topVC = [YMHelpers topViewController:nil];
         YMOpenLinkFromClipboard(topVC, NO);
     }
 }

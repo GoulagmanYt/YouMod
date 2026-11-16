@@ -202,6 +202,17 @@
     return self;
 }
 
+- (instancetype)withBundleIcon:(NSString *)name {
+    self.bundleIcon = name;
+    return self;
+}
+
+- (instancetype)withSubmenuItems:(NSArray<YMSettingsItem *> *)items kind:(NSInteger)kind {
+    self.submenuItems = items;
+    self.submenuKind = kind;
+    return self;
+}
+
 - (BOOL)isVisible {
     return [self isVisibleWithDefaults:[NSUserDefaults standardUserDefaults]];
 }
@@ -367,36 +378,7 @@ void YMRegisterSettingsGroup(NSString *title, NSArray<YMSettingsItem *> *items) 
 }
 
 #pragma mark - YMSubSettingsViewController
-
-@interface YMSubSettingsViewController : UIViewController <UITableViewDelegate, UITableViewDataSource, UISearchBarDelegate>
-- (UITableView *)tableView;
-- (void)setTableView:(UITableView *)tv;
-- (UISearchBar *)searchBar;
-- (void)setSearchBar:(UISearchBar *)sb;
-- (NSString *)navTitle;
-- (void)setNavTitle:(NSString *)t;
-- (NSArray<YMSettingsItem *> *)items;
-- (void)setItems:(NSArray<YMSettingsItem *> *)items;
-- (UIColor *)ymTextColor;
-- (UIColor *)ymSecondaryColor;
-- (UITableViewCell *)cellForItem:(YMSettingsItem *)item tableView:(UITableView *)tableView;
-- (UITableViewCell *)navCellForItem:(YMSettingsItem *)item tableView:(UITableView *)tableView;
-- (void)updateSearchBarTheme;
-
-// Global search (home page): the search bar covers every registered settings group
-// instead of just this page's own rows.
-- (BOOL)globalSearch;
-- (void)setGlobalSearch:(BOOL)global;
-- (NSArray<YMSearchRow *> *)globalSearchIndex;
-- (NSArray<YMSearchRow *> *)filteredSearchRows;
-- (void)setFilteredSearchRows:(NSArray<YMSearchRow *> *)rows;
-// YES = per-page search bar filtering this page's own rows. Subclasses can override.
-- (BOOL)usesPageSearch;
-// YES = thin version footer below the rows (set before pushing; home page only).
-- (BOOL)showsVersionFooter;
-- (void)setShowsVersionFooter:(BOOL)shows;
-- (UIView *)ymVersionFooterView;
-@end
+// The class interface lives in Headers/YMSubSettingsViewController.h (shared with YMSplitSettings.x).
 
 static const void *kYMTableViewKey = &kYMTableViewKey;
 static const void *kYMSearchBarKey = &kYMSearchBarKey;
@@ -411,6 +393,11 @@ static const void *kYMShowsVersionFooterKey = &kYMShowsVersionFooterKey;
 static const void *kYMGlobalSearchKey = &kYMGlobalSearchKey;
 static const void *kYMGlobalSearchIndexKey = &kYMGlobalSearchIndexKey;
 static const void *kYMFilteredSearchRowsKey = &kYMFilteredSearchRowsKey;
+static const void *kYMHideSearchBarKey = &kYMHideSearchBarKey;
+static const void *kYMGroupHandlerKey = &kYMGroupHandlerKey;
+static const void *kYMSearchTextHandlerKey = &kYMSearchTextHandlerKey;
+static const void *kYMSelectedGroupTitleKey = &kYMSelectedGroupTitleKey;
+static const void *kYMIsSplitSidebarKey = &kYMIsSplitSidebarKey;
 
 static NSString *YMFormattedSliderValue(NSString *key, float value) {
     if ([key isEqualToString:HoldToSpeedRate]) {
@@ -425,6 +412,48 @@ static NSString *YMFormattedSliderValue(NSString *key, float value) {
     return [formatter stringFromTimeInterval:value] ?: @"";
 }
 
+// YouTube Sans Bold at 22pt — the settings header title font ("YouTubeSans-Bold"),
+// used for the thick title next to the close (✕) button and every page title.
+static UIFont *YMSettingsTitleFont(void) {
+    static UIFont *font;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        YTDefaultTypeStyle *typeStyle = [%c(YTTypeStyle) defaultTypeStyle];
+        if ([typeStyle respondsToSelector:@selector(ytSansFontOfSize:weight:)]) {
+            font = [typeStyle ytSansFontOfSize:22 weight:UIFontWeightBold];
+        }
+        if (!font) font = [UIFont fontWithName:@"YouTubeSans-Bold" size:22];
+        if (!font) font = [UIFont systemFontOfSize:22 weight:UIFontWeightBold];
+    });
+    return font;
+}
+
+// UINavigationBarAppearance for the settings pages: solid background and a
+// heavy ("thick") header title font.
+UINavigationBarAppearance *YMNavBarAppearance(UIColor *bgColor, UIColor *titleColor) {
+    UINavigationBarAppearance *appearance = [[UINavigationBarAppearance alloc] init];
+    [appearance configureWithDefaultBackground];
+    appearance.backgroundColor = bgColor;
+    appearance.titleTextAttributes = @{
+        NSFontAttributeName: YMSettingsTitleFont(),
+        NSForegroundColorAttributeName: titleColor ?: [UIColor labelColor],
+    };
+    return appearance;
+}
+
+// Runs theme (dark/light) color updates as a smooth cross-fade on the given
+// view's window (falling back to the view itself when off-screen) so switches
+// animate instead of snapping.
+void YMAnimateThemeChange(UIView *view, void (^changes)(void)) {
+    if (!changes) return;
+    UIView *target = view.window ?: view;
+    [UIView transitionWithView:target
+                      duration:0.25
+                       options:UIViewAnimationOptionTransitionCrossDissolve | UIViewAnimationOptionAllowUserInteraction
+                    animations:changes
+                    completion:nil];
+}
+
 @implementation YMSubSettingsViewController
 
 - (UITableView *)tableView { return objc_getAssociatedObject(self, kYMTableViewKey); }
@@ -436,7 +465,23 @@ static NSString *YMFormattedSliderValue(NSString *key, float value) {
 - (NSArray<YMSettingsItem *> *)items { return objc_getAssociatedObject(self, kYMItemsKey); }
 - (void)setItems:(NSArray<YMSettingsItem *> *)items { objc_setAssociatedObject(self, kYMItemsKey, items, OBJC_ASSOCIATION_RETAIN_NONATOMIC); }
 
-- (BOOL)usesPageSearch { return YES; }
+// iPad split-view hooks (nil on regular pages), stored as associated objects.
+- (YMGroupSelectionHandler)groupHandler { return objc_getAssociatedObject(self, kYMGroupHandlerKey); }
+- (void)setGroupHandler:(YMGroupSelectionHandler)handler { objc_setAssociatedObject(self, kYMGroupHandlerKey, handler, OBJC_ASSOCIATION_COPY_NONATOMIC); }
+- (void (^)(NSString *text))searchTextHandler { return objc_getAssociatedObject(self, kYMSearchTextHandlerKey); }
+- (void)setSearchTextHandler:(void (^)(NSString *text))handler { objc_setAssociatedObject(self, kYMSearchTextHandlerKey, handler, OBJC_ASSOCIATION_COPY_NONATOMIC); }
+- (NSString *)selectedGroupTitle { return objc_getAssociatedObject(self, kYMSelectedGroupTitleKey); }
+- (void)setSelectedGroupTitle:(NSString *)title { objc_setAssociatedObject(self, kYMSelectedGroupTitleKey, title, OBJC_ASSOCIATION_COPY_NONATOMIC); }
+
+// YES only for the embedded sidebar page of the iPad split settings — its nav
+// rows get the #2885FF touch feedback (see navCellForItem:).
+- (BOOL)ymIsSplitSidebar { return [objc_getAssociatedObject(self, kYMIsSplitSidebarKey) boolValue]; }
+- (void)setYmIsSplitSidebar:(BOOL)sidebar { objc_setAssociatedObject(self, kYMIsSplitSidebarKey, @(sidebar), OBJC_ASSOCIATION_RETAIN_NONATOMIC); }
+
+- (BOOL)hideSearchBar { return [objc_getAssociatedObject(self, kYMHideSearchBarKey) boolValue]; }
+- (void)setHideSearchBar:(BOOL)hide { objc_setAssociatedObject(self, kYMHideSearchBarKey, @(hide), OBJC_ASSOCIATION_RETAIN_NONATOMIC); }
+
+- (BOOL)usesPageSearch { return ![self hideSearchBar]; }
 
 #pragma mark - Version footer
 
@@ -458,7 +503,7 @@ static NSString *YMFormattedSliderValue(NSString *key, float value) {
     @try {
         ytVersion = [%c(YTVersionUtils) appVersion] ?: @"";
     } @catch (...) {}
-    label.text = [NSString stringWithFormat:@"YouTube %@ • YouMod %@", ytVersion, YouModVersion];
+    label.text = [NSString stringWithFormat:@"YouTube %@ • YouMod build %@ (%@)", ytVersion, YouModVersion, [YouModCommit substringToIndex:MIN((NSUInteger)7, YouModCommit.length)]];
     label.font = [UIFont systemFontOfSize:13 weight:UIFontWeightLight];
     label.textColor = [self ymSecondaryColor];
     label.textAlignment = NSTextAlignmentNatural; // follows RTL/LTR
@@ -573,17 +618,31 @@ static const void *kYMCachedDisplayedItemsKey = &kYMCachedDisplayedItemsKey;
         } else {
             tf.textColor = [UIColor labelColor];
         }
-        tf.backgroundColor = UIColor.clearColor;
         tf.tintColor = sb.tintColor;
         tf.attributedPlaceholder = [[NSAttributedString alloc] initWithString:sb.placeholder ?: @"" attributes:@{NSForegroundColorAttributeName: [UIColor secondaryLabelColor]}];
-        YouModApplyLiquidGlassToView(tf, NO);
+        if (YMHostBundleSupportsLiquidGlass()) {
+            // iOS 26 SDK host: transparent field over the flexible glass.
+            tf.backgroundColor = UIColor.clearColor;
+            YouModApplyLiquidGlassToView(tf, NO);
+            tf.layer.cornerRadius = YMCornerRadiusSearchBar;
+            tf.layer.cornerCurve = kCACornerCurveContinuous;
+            tf.layer.masksToBounds = YES;
+        } else {
+            // Pre-26 host: SB-style gray fill.
+            tf.backgroundColor = [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *trait) {
+                return (trait.userInterfaceStyle == UIUserInterfaceStyleDark) ? [UIColor secondarySystemBackgroundColor] : [UIColor systemGray5Color];
+            }];
+            tf.layer.masksToBounds = YES;
+            tf.layer.borderWidth = 0.0;
+            tf.layer.borderColor = nil;
+            tf.layer.cornerRadius = YMCornerRadiusSearchBar;
+            tf.layer.cornerCurve = kCACornerCurveContinuous;
+        }
     }
 }
 
 - (void)viewDidLoad {
-    Class ytStyled = objc_getClass("YTStyledViewController");
-    struct objc_super superStruct = { self, ytStyled ?: [UIViewController class] };
-    ((void (*)(struct objc_super *, SEL))objc_msgSendSuper)(&superStruct, @selector(viewDidLoad));
+    [super viewDidLoad];
 
     self.title = self.navTitle;
 
@@ -593,9 +652,7 @@ static const void *kYMCachedDisplayedItemsKey = &kYMCachedDisplayedItemsKey;
 
     self.view.backgroundColor = bgColor;
 
-    UINavigationBarAppearance *appearance = [[UINavigationBarAppearance alloc] init];
-    [appearance configureWithDefaultBackground];
-    appearance.backgroundColor = bgColor;
+    UINavigationBarAppearance *appearance = YMNavBarAppearance(bgColor, [self navBarForegroundColor]);
     self.navigationController.navigationBar.standardAppearance = appearance;
     self.navigationController.navigationBar.scrollEdgeAppearance = appearance;
 
@@ -616,7 +673,7 @@ static const void *kYMCachedDisplayedItemsKey = &kYMCachedDisplayedItemsKey;
         sb.translatesAutoresizingMaskIntoConstraints = NO;
         sb.placeholder = LOC(@"SEARCH");
         sb.searchBarStyle = UISearchBarStyleMinimal;
-        sb.tintColor = [UIColor colorWithRed:0.6 green:0.2 blue:0.9 alpha:1.0];
+        sb.tintColor = [YMHelpers accentColor];
         sb.delegate = self;
         sb.backgroundImage = [[UIImage alloc] init];
         [self.view addSubview:sb];
@@ -651,18 +708,18 @@ static const void *kYMCachedDisplayedItemsKey = &kYMCachedDisplayedItemsKey;
 - (void)traitCollectionDidChange:(UITraitCollection *)previousTraitCollection {
     [super traitCollectionDidChange:previousTraitCollection];
     if (previousTraitCollection.userInterfaceStyle != self.traitCollection.userInterfaceStyle) {
-        UIColor *bgColor = (self.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark)
-            ? [%c(YTColor) black3]
-            : [UIColor systemBackgroundColor];
-        self.view.backgroundColor = bgColor;
-        self.tableView.backgroundColor = bgColor;
-        UINavigationBarAppearance *appearance = [[UINavigationBarAppearance alloc] init];
-        [appearance configureWithDefaultBackground];
-        appearance.backgroundColor = bgColor;
-        self.navigationController.navigationBar.standardAppearance = appearance;
-        self.navigationController.navigationBar.scrollEdgeAppearance = appearance;
-        [self updateSearchBarTheme];
-        [self updateDisplayedItemsAnimated:NO];
+        YMAnimateThemeChange(self.view, ^{
+            UIColor *bgColor = (self.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark)
+                ? [%c(YTColor) black3]
+                : [UIColor systemBackgroundColor];
+            self.view.backgroundColor = bgColor;
+            self.tableView.backgroundColor = bgColor;
+            UINavigationBarAppearance *appearance = YMNavBarAppearance(bgColor, [self navBarForegroundColor]);
+            self.navigationController.navigationBar.standardAppearance = appearance;
+            self.navigationController.navigationBar.scrollEdgeAppearance = appearance;
+            [self updateSearchBarTheme];
+            [self updateDisplayedItemsAnimated:NO];
+        });
     }
 }
 
@@ -674,12 +731,17 @@ static const void *kYMCachedDisplayedItemsKey = &kYMCachedDisplayedItemsKey;
 - (void)setFilteredSearchRows:(NSArray<YMSearchRow *> *)rows { objc_setAssociatedObject(self, kYMFilteredSearchRowsKey, rows, OBJC_ASSOCIATION_RETAIN_NONATOMIC); }
 
 // One settings item as a search row rendered through this page's cell builders.
-- (YMSearchRow *)searchRowForItem:(YMSettingsItem *)item groupTitle:(NSString *)groupTitle {
+// Tapping the row opens the group's page (or routes to the iPad split view).
+- (YMSearchRow *)searchRowForItem:(YMSettingsItem *)item group:(YMSettingsGroup *)group {
     __weak typeof(self) weakSelf = self;
     YMSearchRow *row = [YMSearchRow new];
     NSString *sub = item.subtitle.length ? item.subtitle : @"";
-    row.searchText = [NSString stringWithFormat:@"%@ %@ %@", item.title ?: @"", sub, groupTitle ?: @""];
+    row.searchText = [NSString stringWithFormat:@"%@ %@ %@", item.title ?: @"", sub, group.title ?: @""];
     row.makeCell = ^UITableViewCell *(UITableView *tv) { return [weakSelf cellForItem:item tableView:tv]; };
+    row.onSelect = ^(UIViewController *presenter, void (^reload)(void)) {
+        (void)reload;
+        YMOpenGroupFromHost(presenter, group.title, group.items, YMSubmenuKindSettings);
+    };
     return row;
 }
 
@@ -695,7 +757,7 @@ static const void *kYMCachedDisplayedItemsKey = &kYMCachedDisplayedItemsKey;
                 || item.type == YMRowTypeSegment || item.type == YMRowTypeTextSegment
                 || item.type == YMRowTypeImageSegment || item.type == YMRowTypeSlider;
             if (!searchable || item.title.length == 0 || ![item isVisible]) continue;
-            [rows addObject:[self searchRowForItem:item groupTitle:group.title]];
+            [rows addObject:[self searchRowForItem:item group:group]];
         }
     }
     [rows addObjectsFromArray:sbSearchRows(self)];
@@ -722,6 +784,10 @@ static const void *kYMCachedDisplayedItemsKey = &kYMCachedDisplayedItemsKey;
 
 - (void)searchBar:(UISearchBar *)searchBar textDidChange:(NSString *)searchText {
     self.pageFilter = [searchText stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+    if (self.searchTextHandler) { // iPad sidebar: drive another pane instead of filtering here
+        self.searchTextHandler(self.pageFilter);
+        return;
+    }
     if (self.globalSearch) {
         [self updateGlobalSearchResults];
         [self.tableView reloadData];
@@ -746,6 +812,10 @@ static const void *kYMCachedDisplayedItemsKey = &kYMCachedDisplayedItemsKey;
     searchBar.text = @"";
     self.pageFilter = @"";
     [searchBar resignFirstResponder];
+    if (self.searchTextHandler) {
+        self.searchTextHandler(@"");
+        return;
+    }
     if (self.globalSearch) {
         [self updateGlobalSearchResults];
         [self.tableView reloadData];
@@ -755,22 +825,11 @@ static const void *kYMCachedDisplayedItemsKey = &kYMCachedDisplayedItemsKey;
 }
 
 - (void)viewWillAppear:(BOOL)animated {
-    Class ytStyled = objc_getClass("YTStyledViewController");
-    struct objc_super superStruct = { self, ytStyled ?: [UIViewController class] };
-    ((void (*)(struct objc_super *, SEL, BOOL))objc_msgSendSuper)(&superStruct, @selector(viewWillAppear:), animated);
+    [super viewWillAppear:animated];
 }
 
 - (void)viewDidLayoutSubviews {
-    Class ytStyled = objc_getClass("YTStyledViewController");
-    struct objc_super superStruct = { self, ytStyled ?: [UIViewController class] };
-    ((void (*)(struct objc_super *, SEL))objc_msgSendSuper)(&superStruct, @selector(viewDidLayoutSubviews));
-    YTQTMButton *backButton = [self valueForKey:@"_backButton"];
-
-    if (self.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark) {
-        backButton.tintColor = [UIColor whiteColor];
-    } else {
-        backButton.tintColor = [UIColor blackColor];
-    }
+    [super viewDidLayoutSubviews];
 
     // Keep the footer width in sync with the table (created before layout).
     UIView *footer = self.tableView.tableFooterView;
@@ -781,6 +840,10 @@ static const void *kYMCachedDisplayedItemsKey = &kYMCachedDisplayedItemsKey;
             footer.frame = f;
         }
     }
+
+    // Pre-26 hosts: re-measure the search field's capsule radius now that it
+    // has its real height (bounds are zero when styled in viewDidLoad).
+    if (!YMHostBundleSupportsLiquidGlass()) [self updateSearchBarTheme];
 }
 
 - (UIColor *)navBarForegroundColor {
@@ -862,6 +925,11 @@ static const void *kYMCachedDisplayedItemsKey = &kYMCachedDisplayedItemsKey;
         return;
     }
     YMSettingsItem *item = self.displayedItems[indexPath.row];
+    if (item.type == YMRowTypeAction && item.opensPage && (item.submenuItems.count > 0 || item.submenuKind == YMSubmenuKindSponsorBlock)) {
+        // Group row: opens the page carried by the row itself (never a captured VC).
+        YMOpenGroupFromHost(self, item.title, item.submenuItems, item.submenuKind);
+        return;
+    }
     if (item.type == YMRowTypeAction && item.action) {
         item.action(self);
     } else if (item.type == YMRowTypeDeveloper && item.profileURL.length > 0) {
@@ -889,7 +957,7 @@ static const void *kYMCachedDisplayedItemsKey = &kYMCachedDisplayedItemsKey;
 
     UISwitch *sw = [[UISwitch alloc] init];
     sw.on = IS_ENABLED(item.key);
-    sw.onTintColor = [UIColor colorWithRed:0.6 green:0.2 blue:0.9 alpha:1.0];
+    sw.onTintColor = [YMHelpers accentColor];
     objc_setAssociatedObject(sw, kYMSwitchKeyAssoc, item.key, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     [sw addTarget:self action:@selector(toggleChanged:) forControlEvents:UIControlEventValueChanged];
     cell.accessoryView = sw;
@@ -945,7 +1013,7 @@ static const void *kYMCachedDisplayedItemsKey = &kYMCachedDisplayedItemsKey;
     slider.minimumValue = item.sliderMin;
     slider.maximumValue = item.sliderMax;
     [slider setValue:stored animated:NO];
-    slider.minimumTrackTintColor = [UIColor colorWithRed:0.6 green:0.2 blue:0.9 alpha:1.0];
+    slider.minimumTrackTintColor = [YMHelpers accentColor];
     slider.maximumTrackTintColor = [UIColor colorWithWhite:0.3 alpha:1.0];
     objc_setAssociatedObject(slider, kYMSliderKeyAssoc, item.key, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     objc_setAssociatedObject(slider, kYMSliderStepAssoc, @(item.sliderStep), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -1087,10 +1155,20 @@ static UIImage *YMGrayCircle(CGFloat diameter) {
 
 // Menu row that pushes a page: leading YT icon (RTL-mirrored), title, chevron.
 - (UITableViewCell *)navCellForItem:(YMSettingsItem *)item tableView:(UITableView *)tableView {
+    BOOL isSidebarRow = [YMHelpers isPadHardware] && self.ymIsSplitSidebar;
     UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil];
     cell.backgroundColor = [UIColor clearColor];
-    cell.selectionStyle = UITableViewCellSelectionStyleDefault;
+    cell.selectionStyle = isSidebarRow ? UITableViewCellSelectionStyleNone : UITableViewCellSelectionStyleDefault;
     cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+
+    // iPad sidebar: the YouMod accent color marks the row whose page is
+    // currently in the detail pane (selectedGroupTitle is nil on regular
+    // pages). Square — no rounded corners.
+    if (self.selectedGroupTitle.length > 0 && [self.selectedGroupTitle isEqualToString:item.title]) {
+        UIView *bg = [[UIView alloc] init];
+        bg.backgroundColor = [[YMHelpers accentColor] colorWithAlphaComponent:0.18];
+        cell.backgroundView = bg;
+    }
 
     UILabel *titleLabel = [[UILabel alloc] init];
     titleLabel.translatesAutoresizingMaskIntoConstraints = NO;
@@ -1102,12 +1180,20 @@ static UIImage *YMGrayCircle(CGFloat diameter) {
     NSLayoutXAxisAnchor *textLeading = cell.contentView.leadingAnchor;
     CGFloat textInset = 16;
 
-    if (item.iconType > 0) {
+    UIImage *leadingIcon = nil;
+    if (item.bundleIcon.length > 0) {
+        // YouMod bundle icon (old/new set follows YouTube's icon style), tinted
+        // to match the row text so both themes look right.
+        UIImage *img = [YMIconProvider settingsIcon:item.bundleIcon];
+        if (img) leadingIcon = [img imageWithTintColor:[self ymTextColor] renderingMode:UIImageRenderingModeAlwaysOriginal];
+    } else if (item.iconType > 0) {
+        leadingIcon = [YMHelpers ytIconImage:item.iconType useCustomColor:NO customColor:nil];
+    }
+    if (leadingIcon) {
         UIImageView *iconView = [[UIImageView alloc] init];
         iconView.translatesAutoresizingMaskIntoConstraints = NO;
         iconView.contentMode = UIViewContentModeScaleAspectFit;
-        UIImage *icon = YouModYTIconImage(item.iconType, NO, nil);
-        iconView.image = [icon imageFlippedForRightToLeftLayoutDirection];
+        iconView.image = [leadingIcon imageFlippedForRightToLeftLayoutDirection];
         [cell.contentView addSubview:iconView];
         [NSLayoutConstraint activateConstraints:@[
             [iconView.leadingAnchor constraintEqualToAnchor:cell.contentView.leadingAnchor constant:16],
@@ -1383,7 +1469,12 @@ static UIImage *YMGrayCircle(CGFloat diameter) {
         [menuButton setImage:[UIImage systemImageNamed:@"chevron.up.chevron.down"] forState:UIControlStateNormal];
         menuButton.tintColor = [self ymSecondaryColor];
         menuButton.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft;
+        // Unreachable on the iOS 15.0 floor (UIButtonConfiguration always
+        // exists); kept as a legacy fallback, so silence the iOS 15 deprecation.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
         menuButton.imageEdgeInsets = UIEdgeInsetsMake(0, 6, 0, -6);
+#pragma clang diagnostic pop
     }
 
     NSMutableArray<UIMenuElement *> *menuActions = [NSMutableArray array];
@@ -1551,9 +1642,9 @@ YMSettingsItem *YMDeveloper(NSString *name, NSString *role, NSString *profileURL
 #pragma mark - YMTabOrderViewController
 
 static NSString * const kYMTabIDs[] = {
-    @"home", @"shorts", @"create", @"subscriptions", @"library", @"history", @"gaming", @"sports", @"notifications", @"news", @"music", @"watchlater", @"playlist", @"like", @"live", @"post", @"video", @"movie", @"course", @"minigame", @"fashion", @"learning", @"download"
+    @"home", @"shorts", @"create", @"subscriptions", @"library", @"history", @"gaming", @"sports", @"notifications", @"news", @"music", @"watchlater", @"playlist", @"like", @"live", @"post", @"video", @"movie", @"course", @"minigame", @"fashion", @"learning", @"download", @"charts"
 };
-static const NSInteger kYMTabCount = 23;
+static const NSInteger kYMTabCount = 24;
 static const NSInteger kYMTabMaxEnabled = 6;
 static const NSInteger kYMTabMinEnabled = 1;
 
@@ -1608,22 +1699,17 @@ static const void *kYMTabSavedScrollEdgeAppearanceKey = &kYMTabSavedScrollEdgeAp
     if ([tabID isEqualToString:@"fashion"]) return LOC(@"FASHION_TAB");
     if ([tabID isEqualToString:@"learning"]) return LOC(@"LEARNING_TAB");
     if ([tabID isEqualToString:@"download"]) return LOC(@"DOWNLOAD_LIBRARY_TAB");
+    if ([tabID isEqualToString:@"charts"]) return LOC(@"CHARTS_TAB");
     return tabID;
 }
 
 - (UIImage *)iconForTabID:(NSString *)tabID {
-    static YTAssetLoader *cachedLoader = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        cachedLoader = [[%c(YTAssetLoader) alloc] initWithBundle:YouModBundle()];
-    });
-
     if ([tabID isEqualToString:@"create"]) {
         UIImageSymbolConfiguration *config = [UIImageSymbolConfiguration configurationWithPointSize:18 weight:UIImageSymbolWeightMedium];
         return [[UIImage systemImageNamed:@"plus" withConfiguration:config] imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
     }
     NSDictionary *ytIconTypes = @{@"home": @(65), @"shorts": @(769), @"subscriptions": @(66), @"library": @(61)};
-    NSDictionary *bundleIcons = @{@"history": @"icons/history", @"gaming": @"icons/gaming", @"sports": @"icons/sports", @"notifications": @"icons/noti", @"news": @"icons/news", @"music": @"icons/music", @"watchlater": @"icons/watchlater", @"playlist": @"icons/playlist", @"like": @"icons/like", @"live": @"icons/live", @"post": @"icons/post", @"video": @"icons/video", @"movie": @"icons/movie", @"course": @"icons/course", @"minigame": @"icons/minigame", @"fashion": @"icons/fashion", @"learning": @"icons/learning", @"download": @"icons/download"};
+    NSDictionary *bundleIcons = @{@"history": @"history", @"gaming": @"gaming", @"sports": @"sports", @"notifications": @"noti", @"news": @"news", @"music": @"music", @"watchlater": @"watchlater", @"playlist": @"playlist", @"like": @"like", @"live": @"live", @"post": @"post", @"video": @"video", @"movie": @"movie", @"course": @"course", @"minigame": @"minigame", @"fashion": @"fashion", @"learning": @"learning", @"download": @"download", @"charts": @"charts"};
 
     NSNumber *iconType = ytIconTypes[tabID];
     if (iconType) {
@@ -1637,8 +1723,8 @@ static const void *kYMTabSavedScrollEdgeAppearanceKey = &kYMTabSavedScrollEdgeAp
     }
 
     NSString *bundleName = bundleIcons[tabID];
-    if (bundleName && cachedLoader) {
-        UIImage *img = [cachedLoader imageNamed:bundleName];
+    if (bundleName) {
+        UIImage *img = [YMIconProvider tabIcon:bundleName selected:NO];
         if (img) return [img imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
     }
 
@@ -1646,9 +1732,7 @@ static const void *kYMTabSavedScrollEdgeAppearanceKey = &kYMTabSavedScrollEdgeAp
 }
 
 - (void)viewDidLoad {
-    Class ytStyled = objc_getClass("YTStyledViewController");
-    struct objc_super superStruct = { self, ytStyled ?: [UIViewController class] };
-    ((void (*)(struct objc_super *, SEL))objc_msgSendSuper)(&superStruct, @selector(viewDidLoad));
+    [super viewDidLoad];
 
     self.title = LOC(@"MANAGE_TABS");
     [self loadTabData];
@@ -1660,13 +1744,8 @@ static const void *kYMTabSavedScrollEdgeAppearanceKey = &kYMTabSavedScrollEdgeAp
     objc_setAssociatedObject(self, kYMTabSavedScrollEdgeAppearanceKey, sharedNavBar.scrollEdgeAppearance, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 
     // Configure navigation bar appearance with solid color
-    UINavigationBarAppearance *appearance = [[UINavigationBarAppearance alloc] init];
-    [appearance configureWithDefaultBackground];
-    if (self.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark) {
-        appearance.backgroundColor = [%c(YTColor) black3];
-    } else {
-        appearance.backgroundColor = [UIColor systemBackgroundColor];
-    }
+    BOOL dark = self.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark;
+    UINavigationBarAppearance *appearance = YMNavBarAppearance(dark ? [%c(YTColor) black3] : [UIColor systemBackgroundColor], dark ? [UIColor whiteColor] : [UIColor blackColor]);
     self.navigationController.navigationBar.standardAppearance = appearance;
     self.navigationController.navigationBar.scrollEdgeAppearance = appearance;
 
@@ -1691,35 +1770,28 @@ static const void *kYMTabSavedScrollEdgeAppearanceKey = &kYMTabSavedScrollEdgeAp
 - (void)traitCollectionDidChange:(UITraitCollection *)previousTraitCollection {
     [super traitCollectionDidChange:previousTraitCollection];
     if (previousTraitCollection.userInterfaceStyle != self.traitCollection.userInterfaceStyle) {
-        self.tableView.backgroundColor = (self.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark)
-            ? [%c(YTColor) black3]
-            : [UIColor systemBackgroundColor];
-        
-        // Update navigation bar appearance for dark/light mode
-        UINavigationBarAppearance *appearance = [[UINavigationBarAppearance alloc] init];
-        [appearance configureWithDefaultBackground];
-        if (self.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark) {
-            appearance.backgroundColor = [%c(YTColor) black3];
-        } else {
-            appearance.backgroundColor = [UIColor systemBackgroundColor];
-        }
-        self.navigationController.navigationBar.standardAppearance = appearance;
-        self.navigationController.navigationBar.scrollEdgeAppearance = appearance;
+        YMAnimateThemeChange(self.view, ^{
+            self.tableView.backgroundColor = (self.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark)
+                ? [%c(YTColor) black3]
+                : [UIColor systemBackgroundColor];
 
-        [self.tableView reloadData];
+            // Update navigation bar appearance for dark/light mode
+            BOOL dark = self.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark;
+            UINavigationBarAppearance *appearance = YMNavBarAppearance(dark ? [%c(YTColor) black3] : [UIColor systemBackgroundColor], dark ? [UIColor whiteColor] : [UIColor blackColor]);
+            self.navigationController.navigationBar.standardAppearance = appearance;
+            self.navigationController.navigationBar.scrollEdgeAppearance = appearance;
+
+            [self.tableView reloadData];
+        });
     }
 }
 
 - (void)viewWillAppear:(BOOL)animated {
-    Class ytStyled = objc_getClass("YTStyledViewController");
-    struct objc_super superStruct = { self, ytStyled ?: [UIViewController class] };
-    ((void (*)(struct objc_super *, SEL, BOOL))objc_msgSendSuper)(&superStruct, @selector(viewWillAppear:), animated);
+    [super viewWillAppear:animated];
 }
 
 - (void)viewWillDisappear:(BOOL)animated {
-    Class ytStyled = objc_getClass("YTStyledViewController");
-    struct objc_super superStruct = { self, ytStyled ?: [UIViewController class] };
-    ((void (*)(struct objc_super *, SEL, BOOL))objc_msgSendSuper)(&superStruct, @selector(viewWillDisappear:), animated);
+    [super viewWillDisappear:animated];
 
     // Restore the saved nav-bar appearance so the previous screen keeps its tint.
     UINavigationBar *navBar = self.navigationController.navigationBar;
@@ -1728,16 +1800,7 @@ static const void *kYMTabSavedScrollEdgeAppearanceKey = &kYMTabSavedScrollEdgeAp
 }
 
 - (void)viewDidLayoutSubviews {
-    Class ytStyled = objc_getClass("YTStyledViewController");
-    struct objc_super superStruct = { self, ytStyled ?: [UIViewController class] };
-    ((void (*)(struct objc_super *, SEL))objc_msgSendSuper)(&superStruct, @selector(viewDidLayoutSubviews));
-    YTQTMButton *backButton = [self valueForKey:@"_backButton"];
-
-    if (self.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark) {
-        backButton.tintColor = [UIColor whiteColor];
-    } else {
-        backButton.tintColor = [UIColor blackColor];
-    }
+    [super viewDidLayoutSubviews];
 }
 
 - (void)loadTabData {
@@ -1806,8 +1869,8 @@ static const void *kYMTabSavedScrollEdgeAppearanceKey = &kYMTabSavedScrollEdgeAp
 - (NSInteger)enabledCount {
     NSInteger count = 0;
     for (NSDictionary *entry in self.tabData) {
-        // Download tab is governed by the Downloading settings, not the
-        // per-tab limit here.
+        // Download tab is governed by the Downloading settings; its share of
+        // the tab limit is added by the caller when it's enabled.
         if ([entry[@"id"] isEqualToString:@"download"]) continue;
         if ([entry[@"enabled"] boolValue]) count++;
     }
@@ -1833,7 +1896,7 @@ static const void *kYMTabSavedScrollEdgeAppearanceKey = &kYMTabSavedScrollEdgeAp
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
 
         sw = [[UISwitch alloc] init];
-        sw.onTintColor = [UIColor colorWithRed:0.6 green:0.2 blue:0.9 alpha:1.0];
+        sw.onTintColor = [YMHelpers accentColor];
         [sw addTarget:self action:@selector(tabToggleChanged:) forControlEvents:UIControlEventValueChanged];
         sw.translatesAutoresizingMaskIntoConstraints = NO;
         sw.tag = 999;
@@ -1889,7 +1952,12 @@ static const void *kYMTabSavedScrollEdgeAppearanceKey = &kYMTabSavedScrollEdgeAp
 
     BOOL wantsEnabled = sender.on;
 
-    if (wantsEnabled && [self enabledCount] >= kYMTabMaxEnabled) {
+    // Download Library counts toward the 6-tab limit when it's enabled (its
+    // switch lives in the Downloading settings, but the tab bar shows it).
+    NSInteger tabCount = [self enabledCount];
+    if ([[NSUserDefaults standardUserDefaults] boolForKey:DownloadLibraryTab]) tabCount++;
+
+    if (wantsEnabled && tabCount >= kYMTabMaxEnabled) {
         sender.on = NO;
         YTAlertView *alert = [%c(YTAlertView) infoDialog];
         alert.title = LOC(@"TAB_LIMIT");
@@ -1965,40 +2033,20 @@ static const void *kYMTabSavedScrollEdgeAppearanceKey = &kYMTabSavedScrollEdgeAp
 
 @end
 
-void YMPushTabOrder(id settingsVC, id parentResponder) {
-    Class styledClass = objc_getClass("YMTabOrderViewControllerStyled");
-    if (!styledClass) styledClass = [YMTabOrderViewController class];
-
-    YMTabOrderViewController *vc = (YMTabOrderViewController *)((id (*)(id, SEL, id))objc_msgSend)([styledClass alloc], @selector(initWithParentResponder:), parentResponder);
-    if (!vc) vc = [[styledClass alloc] init];
-    [settingsVC pushViewController:vc];
-}
-
-// Modal Manage Tabs entry (Home tab long-press) when no settings nav stack exists:
-// wraps the tab-order VC in a UINavigationController with a Done button.
-void YMPresentTabOrderModally(id parentResponder) {
-    Class styledClass = objc_getClass("YMTabOrderViewControllerStyled");
-    if (!styledClass) styledClass = [YMTabOrderViewController class];
-
-    YMTabOrderViewController *vc = (YMTabOrderViewController *)((id (*)(id, SEL, id))objc_msgSend)([styledClass alloc], @selector(initWithParentResponder:), parentResponder);
-    if (!vc) vc = [[styledClass alloc] init];
-
+// Manage Tabs from the tab bar (YTPivotItem long-press): presented modally as a
+// form sheet (never fullscreen). The settings row uses YMPushTabOrder instead.
+void YMPresentTabOrder(id presenter) {
+    YMTabOrderViewController *vc = [[YMTabOrderViewController alloc] init];
     UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:vc];
     nav.modalPresentationStyle = UIModalPresentationFormSheet;
 
-    UINavigationBarAppearance *appearance = [[UINavigationBarAppearance alloc] init];
-    [appearance configureWithDefaultBackground];
-    appearance.backgroundColor = [UIColor colorWithDynamicProvider:^UIColor * _Nonnull(UITraitCollection * _Nonnull traitCollection) {
-        if (traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark) {
-            return [%c(YTColor) black3];
-        } else {
-            return [UIColor systemBackgroundColor];
-        }
-    }];
-        
+    BOOL dark = vc.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark;
+    UIColor *bg = dark ? [%c(YTColor) black3] : [UIColor systemBackgroundColor];
+    UINavigationBarAppearance *appearance = YMNavBarAppearance(bg, dark ? [UIColor whiteColor] : [UIColor labelColor]);
     nav.navigationBar.standardAppearance = appearance;
     nav.navigationBar.scrollEdgeAppearance = appearance;
     nav.navigationBar.compactAppearance = appearance;
+    nav.navigationBar.tintColor = dark ? [UIColor whiteColor] : [UIColor labelColor];
 
     __weak UINavigationController *weakNav = nav;
     UIAction *doneAction = [UIAction actionWithTitle:@"" image:nil identifier:nil handler:^(__unused UIAction *action) {
@@ -2008,9 +2056,9 @@ void YMPresentTabOrderModally(id parentResponder) {
         initWithBarButtonSystemItem:UIBarButtonSystemItemDone
         primaryAction:doneAction];
 
-    UIViewController *presenter = YouModTopViewController(nil);
-    if (!presenter) return;
-    [presenter presentViewController:nav animated:YES completion:nil];
+    UIViewController *from = [presenter isKindOfClass:[UIViewController class]] ? presenter : [YMHelpers topViewController:nil];
+    while (from.presentedViewController) from = from.presentedViewController;
+    [from presentViewController:nav animated:YES completion:nil];
 }
 
 #pragma mark - YMOverlayButtonOrderViewController
@@ -2102,9 +2150,7 @@ static const void *kYMOverlayMoveInFlightKey = &kYMOverlayMoveInFlightKey;
 }
 
 - (void)viewDidLoad {
-    Class ytStyled = objc_getClass("YTStyledViewController");
-    struct objc_super superStruct = { self, ytStyled ?: [UIViewController class] };
-    ((void (*)(struct objc_super *, SEL))objc_msgSendSuper)(&superStruct, @selector(viewDidLoad));
+    [super viewDidLoad];
 
     self.title = LOC(@"MANAGE_OVERLAY_BUTTONS");
     [self loadButtonData];
@@ -2114,13 +2160,8 @@ static const void *kYMOverlayMoveInFlightKey = &kYMOverlayMoveInFlightKey;
     objc_setAssociatedObject(self, kYMOverlaySavedStdAppearanceKey, sharedNavBar.standardAppearance, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     objc_setAssociatedObject(self, kYMOverlaySavedScrollEdgeAppearanceKey, sharedNavBar.scrollEdgeAppearance, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 
-    UINavigationBarAppearance *appearance = [[UINavigationBarAppearance alloc] init];
-    [appearance configureWithDefaultBackground];
-    if (self.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark) {
-        appearance.backgroundColor = [%c(YTColor) black3];
-    } else {
-        appearance.backgroundColor = [UIColor systemBackgroundColor];
-    }
+    BOOL dark = self.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark;
+    UINavigationBarAppearance *appearance = YMNavBarAppearance(dark ? [%c(YTColor) black3] : [UIColor systemBackgroundColor], dark ? [UIColor whiteColor] : [UIColor blackColor]);
     self.navigationController.navigationBar.standardAppearance = appearance;
     self.navigationController.navigationBar.scrollEdgeAppearance = appearance;
 
@@ -2167,34 +2208,27 @@ static const void *kYMOverlayMoveInFlightKey = &kYMOverlayMoveInFlightKey;
 - (void)traitCollectionDidChange:(UITraitCollection *)previousTraitCollection {
     [super traitCollectionDidChange:previousTraitCollection];
     if (previousTraitCollection.userInterfaceStyle != self.traitCollection.userInterfaceStyle) {
-        self.tableView.backgroundColor = (self.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark)
-            ? [%c(YTColor) black3]
-            : [UIColor systemBackgroundColor];
-        
-        UINavigationBarAppearance *appearance = [[UINavigationBarAppearance alloc] init];
-        [appearance configureWithDefaultBackground];
-        if (self.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark) {
-            appearance.backgroundColor = [%c(YTColor) black3];
-        } else {
-            appearance.backgroundColor = [UIColor systemBackgroundColor];
-        }
-        self.navigationController.navigationBar.standardAppearance = appearance;
-        self.navigationController.navigationBar.scrollEdgeAppearance = appearance;
+        YMAnimateThemeChange(self.view, ^{
+            self.tableView.backgroundColor = (self.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark)
+                ? [%c(YTColor) black3]
+                : [UIColor systemBackgroundColor];
 
-        [self.tableView reloadData];
+            BOOL dark = self.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark;
+            UINavigationBarAppearance *appearance = YMNavBarAppearance(dark ? [%c(YTColor) black3] : [UIColor systemBackgroundColor], dark ? [UIColor whiteColor] : [UIColor blackColor]);
+            self.navigationController.navigationBar.standardAppearance = appearance;
+            self.navigationController.navigationBar.scrollEdgeAppearance = appearance;
+
+            [self.tableView reloadData];
+        });
     }
 }
 
 - (void)viewWillAppear:(BOOL)animated {
-    Class ytStyled = objc_getClass("YTStyledViewController");
-    struct objc_super superStruct = { self, ytStyled ?: [UIViewController class] };
-    ((void (*)(struct objc_super *, SEL, BOOL))objc_msgSendSuper)(&superStruct, @selector(viewWillAppear:), animated);
+    [super viewWillAppear:animated];
 }
 
 - (void)viewWillDisappear:(BOOL)animated {
-    Class ytStyled = objc_getClass("YTStyledViewController");
-    struct objc_super superStruct = { self, ytStyled ?: [UIViewController class] };
-    ((void (*)(struct objc_super *, SEL, BOOL))objc_msgSendSuper)(&superStruct, @selector(viewWillDisappear:), animated);
+    [super viewWillDisappear:animated];
 
     UINavigationBar *navBar = self.navigationController.navigationBar;
     navBar.standardAppearance = objc_getAssociatedObject(self, kYMOverlaySavedStdAppearanceKey);
@@ -2202,16 +2236,7 @@ static const void *kYMOverlayMoveInFlightKey = &kYMOverlayMoveInFlightKey;
 }
 
 - (void)viewDidLayoutSubviews {
-    Class ytStyled = objc_getClass("YTStyledViewController");
-    struct objc_super superStruct = { self, ytStyled ?: [UIViewController class] };
-    ((void (*)(struct objc_super *, SEL))objc_msgSendSuper)(&superStruct, @selector(viewDidLayoutSubviews));
-    YTQTMButton *backButton = [self valueForKey:@"_backButton"];
-
-    if (self.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark) {
-        backButton.tintColor = [UIColor whiteColor];
-    } else {
-        backButton.tintColor = [UIColor blackColor];
-    }
+    [super viewDidLayoutSubviews];
 }
 
 - (void)loadButtonData {
@@ -2343,7 +2368,7 @@ static const void *kYMOverlayMoveInFlightKey = &kYMOverlayMoveInFlightKey;
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
 
         sw = [[UISwitch alloc] init];
-        sw.onTintColor = [UIColor colorWithRed:0.6 green:0.2 blue:0.9 alpha:1.0];
+        sw.onTintColor = [YMHelpers accentColor];
         [sw addTarget:self action:@selector(buttonToggleChanged:) forControlEvents:UIControlEventValueChanged];
         sw.translatesAutoresizingMaskIntoConstraints = NO;
         sw.tag = 999;
@@ -2562,100 +2587,115 @@ static const void *kYMOverlayMoveInFlightKey = &kYMOverlayMoveInFlightKey;
 
 @end
 
-void YMPushOverlayButtonOrder(id settingsVC, id parentResponder) {
-    Class styledClass = objc_getClass("YMOverlayButtonOrderViewControllerStyled");
-    if (!styledClass) styledClass = [YMOverlayButtonOrderViewController class];
+void YMPushOverlayButtonOrder(id host) {
+    YMPushOntoHost([[YMOverlayButtonOrderViewController alloc] init], host);
+}
 
-    YMOverlayButtonOrderViewController *vc = (YMOverlayButtonOrderViewController *)((id (*)(id, SEL, id))objc_msgSend)([styledClass alloc], @selector(initWithParentResponder:), parentResponder);
-    if (!vc) vc = [[styledClass alloc] init];
-    [settingsVC pushViewController:vc];
+// "Manage tabs" from the settings (Tab bar group row) pushes like Manage overlay
+// buttons — into the detail pane on iPad, the settings stack on iPhone. (The
+// tab-bar long-press entry uses YMPresentTabOrder instead: a modal form sheet.)
+void YMPushTabOrder(id host) {
+    YMPushOntoHost([[YMTabOrderViewController alloc] init], host);
+}
+
+#pragma mark - Navigation Helpers
+
+// Presents root as the YouMod settings: a full-screen UINavigationController
+// sliding up from the bottom (YouTube's settings chrome is not used). The root
+// page's header is close (✕) with its thick title right next to it; pages
+// pushed inside get the standard back button.
+void YMPresentSettingsPage(UIViewController *root, id presenter) {
+    if (!root) return;
+    (void)root.view; // load the page so its title is set before building the header
+    UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:root];
+    nav.modalPresentationStyle = UIModalPresentationFullScreen;
+
+    BOOL dark = root.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark;
+    UIColor *bg = dark ? [%c(YTColor) black3] : [UIColor systemBackgroundColor];
+    UINavigationBarAppearance *appearance = YMNavBarAppearance(bg, dark ? [UIColor whiteColor] : [UIColor labelColor]);
+    nav.navigationBar.standardAppearance = appearance;
+    nav.navigationBar.scrollEdgeAppearance = appearance;
+    nav.navigationBar.compactAppearance = appearance;
+    nav.navigationBar.tintColor = dark ? [UIColor whiteColor] : [UIColor labelColor];
+
+    NSString *pageTitle = root.title;
+    __weak UINavigationController *weakNav = nav;
+    UIAction *closeAction = [UIAction actionWithTitle:@"" image:nil identifier:nil handler:^(__unused UIAction *action) {
+        [weakNav dismissViewControllerAnimated:YES completion:nil];
+    }];
+    UIBarButtonItem *closeItem = [[UIBarButtonItem alloc]
+        initWithBarButtonSystemItem:UIBarButtonSystemItemClose
+        primaryAction:closeAction];
+
+    // Thick page title as a plain bar item right next to the close button. Its
+    // shared (liquid-glass) background is opted out on iOS 26+
+    // (UIBarButtonItem.h: hidesSharedBackground / sharesBackground) so the title
+    // renders as bare text and is never grouped into the ✕'s glass capsule.
+    UILabel *titleLabel = [[UILabel alloc] init];
+    titleLabel.font = YMSettingsTitleFont();
+    titleLabel.textColor = [UIColor labelColor]; // dynamic: follows dark/light
+    titleLabel.text = pageTitle;
+    UIBarButtonItem *titleItem = [[UIBarButtonItem alloc] initWithCustomView:titleLabel];
+    SEL hidesSharedBackground = NSSelectorFromString(@"setHidesSharedBackground:");
+    if ([titleItem respondsToSelector:hidesSharedBackground]) {
+        ((void (*)(id, SEL, BOOL))objc_msgSend)(titleItem, hidesSharedBackground, YES);
+    }
+    SEL sharesBackground = NSSelectorFromString(@"setSharesBackground:");
+    if ([titleItem respondsToSelector:sharesBackground]) {
+        ((void (*)(id, SEL, BOOL))objc_msgSend)(titleItem, sharesBackground, NO);
+    }
+
+    root.navigationItem.title = @""; // no centered duplicate of the header title
+    root.navigationItem.backButtonTitle = pageTitle; // "‹ <title>" on pushed pages
+    root.navigationItem.leftBarButtonItems = @[closeItem, titleItem];
+
+    UIViewController *from = [presenter isKindOfClass:[UIViewController class]] ? presenter : [YMHelpers topViewController:nil];
+    while (from.presentedViewController) from = from.presentedViewController;
+    [from presentViewController:nav animated:YES completion:nil];
+}
+
+// Pushes child within the current settings modal navigation stack; presents a
+// new settings modal when host is not inside one (entry points). Resolved from
+// the live host at call time — never a captured view controller — so row taps
+// can't dead-end on a stale/detached stack.
+void YMPushOntoHost(UIViewController *child, id host) {
+    if (!child) return;
+    UIViewController *fromVC = [host isKindOfClass:[UIViewController class]] ? host : nil;
+    if (fromVC.navigationController) {
+        [fromVC.navigationController pushViewController:child animated:YES];
+        return;
+    }
+    YMPresentSettingsPage(child, fromVC);
+}
+
+// Builds a group's page without pushing it (kind selects the implementation).
+static UIViewController *YMNewGroupPage(NSString *title, NSArray<YMSettingsItem *> *items, NSInteger kind) {
+    if (kind == YMSubmenuKindSponsorBlock) return YMNewSponsorBlockSettings();
+    return YMNewSubSettings(title, items);
+}
+
+// Opens a row's/group's page: routes to the host's groupHandler when set (the
+// iPad split view swaps its detail pane), otherwise pushes from the live host.
+void YMOpenGroupFromHost(id host, NSString *title, NSArray<YMSettingsItem *> *items, NSInteger kind) {
+    UIViewController *fromVC = [host isKindOfClass:[UIViewController class]] ? host : nil;
+    if (!fromVC) return;
+    if ([fromVC respondsToSelector:@selector(groupHandler)]) {
+        YMGroupSelectionHandler handler = (YMGroupSelectionHandler)((id (*)(id, SEL))objc_msgSend)(fromVC, @selector(groupHandler));
+        if (handler && handler(title, items, kind)) return;
+    }
+    YMPushOntoHost(YMNewGroupPage(title, items, kind), fromVC);
 }
 
 #pragma mark - Entry Point
 
-void YMPushSubSettings(NSString *title, NSArray<YMSettingsItem *> *items, id settingsVC, id parentResponder) {
-    Class styledClass = objc_getClass("YMSubSettingsViewControllerStyled");
-    if (!styledClass) styledClass = [YMSubSettingsViewController class];
-
-    YMSubSettingsViewController *vc = (YMSubSettingsViewController *)((id (*)(id, SEL, id))objc_msgSend)([styledClass alloc], @selector(initWithParentResponder:), parentResponder);
-    if (!vc) vc = [[styledClass alloc] init];
+// Builds a regular settings sub-page (a plain UIViewController living inside the
+// modal settings navigation) without presenting it.
+UIViewController *YMNewSubSettings(NSString *title, NSArray<YMSettingsItem *> *items) {
+    YMSubSettingsViewController *vc = [[YMSubSettingsViewController alloc] init];
     vc.navTitle = title;
     vc.items = items;
-    [settingsVC pushViewController:vc];
+    return vc;
 }
-
-// Same as YMPushSubSettings, but for the home page: version footer on, and the
-// search bar searches every registered settings group instead of just these rows.
-void YMPushSubSettingsWithFooter(NSString *title, NSArray<YMSettingsItem *> *items, id settingsVC, id parentResponder) {
-    Class styledClass = objc_getClass("YMSubSettingsViewControllerStyled");
-    if (!styledClass) styledClass = [YMSubSettingsViewController class];
-
-    YMSubSettingsViewController *vc = (YMSubSettingsViewController *)((id (*)(id, SEL, id))objc_msgSend)([styledClass alloc], @selector(initWithParentResponder:), parentResponder);
-    if (!vc) vc = [[styledClass alloc] init];
-    vc.navTitle = title;
-    vc.items = items;
-    vc.showsVersionFooter = YES;
-    vc.globalSearch = YES;
-    [settingsVC pushViewController:vc];
-}
-
-#pragma mark - Runtime Class Registration
-
-static void ymRegisterStyledSubclass(Class sourceClass, const char *name) {
-    Class ytStyled = %c(YTStyledViewController);
-    Class newClass = objc_allocateClassPair(ytStyled, name, 0);
-    if (!newClass) return;
-
-    // Copy methods/properties from sourceClass up its class chain (stops before
-    // UIViewController). Subclass levels copy first so overrides win.
-    for (Class cls = sourceClass; cls && cls != [UIViewController class]; cls = class_getSuperclass(cls)) {
-        unsigned int count = 0;
-        Method *methods = class_copyMethodList(cls, &count);
-        for (unsigned int i = 0; i < count; i++) {
-            class_addMethod(newClass, method_getName(methods[i]), method_getImplementation(methods[i]), method_getTypeEncoding(methods[i]));
-        }
-        free(methods);
-
-        unsigned int propCount = 0;
-        objc_property_t *props = class_copyPropertyList(cls, &propCount);
-        for (unsigned int i = 0; i < propCount; i++) {
-            unsigned int attrCount = 0;
-            objc_property_attribute_t *attrs = property_copyAttributeList(props[i], &attrCount);
-            class_addProperty(newClass, property_getName(props[i]), attrs, attrCount);
-            free(attrs);
-        }
-        free(props);
-    }
-
-    objc_registerClassPair(newClass);
-}
-
-%hook YTQTMButton
-- (void)layoutSubviews {
-    %orig;
-    if ([self.accessibilityIdentifier isEqualToString:@"id.ui.title.tab.button"]) {
-        UIColor *customTitle = [self valueForKey:@"_desiredCustomTitleColor"];
-
-        if (isDarkMode(self)) {
-            self.titleLabel.textColor = [UIColor whiteColor];
-            if (customTitle) {
-                [self setValue:[UIColor whiteColor] forKey:@"_desiredCustomTitleColor"];
-            }
-        } else {
-            self.titleLabel.textColor = [UIColor blackColor];
-            if (customTitle) {
-                [self setValue:[UIColor blackColor] forKey:@"_desiredCustomTitleColor"];
-            }
-        }
-    } else if ([self.accessibilityIdentifier isEqualToString:@"id.ui.browse.back.button"]) {
-        if (isDarkMode(self)) {
-            self.tintColor = [UIColor whiteColor];
-        } else {
-            self.tintColor = [UIColor blackColor];
-        }
-    }
-}
-%end
 
 %hook YTPivotBarViewController
 - (void)viewDidLoad {
@@ -2667,9 +2707,3 @@ static void ymRegisterStyledSubclass(Class sourceClass, const char *name) {
     [self.parentViewController performSelector:@selector(refreshPivotBarWithTriggedByNotification:) withObject:@YES];
 }
 %end
-
-%ctor {
-    ymRegisterStyledSubclass([YMSubSettingsViewController class], "YMSubSettingsViewControllerStyled");
-    ymRegisterStyledSubclass([YMTabOrderViewController class], "YMTabOrderViewControllerStyled");
-    ymRegisterStyledSubclass([YMOverlayButtonOrderViewController class], "YMOverlayButtonOrderViewControllerStyled");
-}

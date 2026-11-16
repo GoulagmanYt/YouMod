@@ -1,7 +1,33 @@
 #import "Headers.h"
 
-// YouMod's bundle (For localizations)
-NSBundle *YouModBundle() {
+@implementation YMIconProvider
+
+// respondsToSelector:: delhiIconsEnabled exists only on newer YouTube versions.
++ (BOOL)delhiIcons {
+    return [%c(YTUIResources) respondsToSelector:@selector(delhiIconsEnabled)] && [%c(YTUIResources) delhiIconsEnabled];
+}
+
++ (UIImage *)tabIcon:(NSString *)name selected:(BOOL)selected {
+    static YTAssetLoader *loader = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        loader = [[%c(YTAssetLoader) alloc] initWithBundle:[YMHelpers bundle]];
+    });
+    if (!loader || name.length == 0) return nil;
+    NSString *folder = [self delhiIcons] ? @"new" : @"old";
+    NSString *base = selected ? [NSString stringWithFormat:@"%@_selected", name] : name;
+    return [loader imageNamed:[NSString stringWithFormat:@"icons/%@/%@", folder, base]];
+}
+
++ (UIImage *)settingsIcon:(NSString *)name {
+    return [self tabIcon:name selected:NO];
+}
+
+@end
+
+@implementation YMHelpers
+
++ (NSBundle *)bundle {
     static NSBundle *bundle = nil;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
@@ -15,17 +41,18 @@ NSBundle *YouModBundle() {
     return bundle;
 }
 
-// YouTube icon image (YTIIcon)
-UIImage *YouModYTIconImage(NSInteger iconType, BOOL useCustomColor, UIColor *customColor) {
++ (UIColor *)accentColor {
+    return [UIColor colorWithRed:40.0 / 255.0 green:133.0 / 255.0 blue:255.0 / 255.0 alpha:1.0];
+}
+
++ (UIImage *)ytIconImage:(NSInteger)iconType useCustomColor:(BOOL)useCustomColor customColor:(UIColor *)customColor {
     YTIIcon *icon = [%c(YTIIcon) new];
     icon.iconType = iconType;
     UIColor *targetColor = (useCustomColor && customColor) ? customColor : [UIColor labelColor];
     return [[icon iconImageWithColor:targetColor] imageWithTintColor:targetColor];
 }
 
-// Render an SF Symbol into an exact square canvas (aspect-fit, centered) so icon
-// boxes match; result stays template-rendered for later tinting.
-UIImage *YouModSymbolImageInCanvas(NSString *symbolName, CGFloat canvasSize, CGFloat pointSize, UIImageSymbolWeight weight) {
++ (UIImage *)symbolImageInCanvas:(NSString *)symbolName canvasSize:(CGFloat)canvasSize pointSize:(CGFloat)pointSize weight:(UIImageSymbolWeight)weight {
     UIImageSymbolConfiguration *config = [UIImageSymbolConfiguration configurationWithPointSize:pointSize weight:weight];
     UIImage *symbol = [UIImage systemImageNamed:symbolName withConfiguration:config];
     if (!symbol) return nil;
@@ -44,17 +71,15 @@ UIImage *YouModSymbolImageInCanvas(NSString *symbolName, CGFloat canvasSize, CGF
     return [canvas imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
 }
 
-// Language list
-NSArray *getAllSystemLanguageTitles() {
+// Unique languages by code, display names sorted for pickers.
++ (NSArray *)allSystemLanguageTitles {
     NSMutableArray *titles = [NSMutableArray array];
     NSArray *allLocales = [%c(YTLanguages) languageList];
     NSMutableSet *seenLanguages = [NSMutableSet set];
     NSLocale *currentLocale = [NSLocale currentLocale];
-    
+
     for (NSString *localeId in allLocales) {
-        NSDictionary *components = [NSLocale componentsFromLocaleIdentifier:localeId];
-        NSString *langCode = components[NSLocaleLanguageCode];
-        
+        NSString *langCode = [NSLocale componentsFromLocaleIdentifier:localeId][NSLocaleLanguageCode];
         if (langCode && ![seenLanguages containsObject:langCode]) {
             [seenLanguages addObject:langCode];
             NSString *displayName = [currentLocale localizedStringForLocaleIdentifier:langCode];
@@ -64,61 +89,71 @@ NSArray *getAllSystemLanguageTitles() {
     return [titles sortedArrayUsingSelector:@selector(localizedCaseInsensitiveCompare:)];
 }
 
-NSArray *getAllSystemLanguageValues() {
-    NSArray *sortedTitles = getAllSystemLanguageTitles();
-    NSMutableArray *sortedCodes = [NSMutableArray array];
++ (NSArray *)allSystemLanguageValues {
     NSArray *allLocales = [%c(YTLanguages) languageList];
     NSLocale *currentLocale = [NSLocale currentLocale];
-    
     NSMutableDictionary *titleToCodeMap = [NSMutableDictionary dictionary];
     for (NSString *localeId in allLocales) {
-        NSDictionary *components = [NSLocale componentsFromLocaleIdentifier:localeId];
-        NSString *langCode = components[NSLocaleLanguageCode];
+        NSString *langCode = [NSLocale componentsFromLocaleIdentifier:localeId][NSLocaleLanguageCode];
         if (langCode) {
             NSString *displayName = [currentLocale localizedStringForLocaleIdentifier:langCode];
             if (displayName) titleToCodeMap[displayName] = langCode;
         }
     }
-    
-    for (NSString *title in sortedTitles) {
-        [sortedCodes addObject:titleToCodeMap[title] ? titleToCodeMap[title] : @"en"];
+
+    NSMutableArray *sortedCodes = [NSMutableArray array];
+    for (NSString *title in [self allSystemLanguageTitles]) {
+        [sortedCodes addObject:titleToCodeMap[title] ?: @"en"];
     }
     return [sortedCodes copy];
 }
 
-// Get TopViewController
-UIViewController *YouModTopViewController(UIViewController *root) {
-    if (!root) {
-        UIWindow *keyWindow = nil;
-        for (UIWindow *window in UIApplication.sharedApplication.windows) {
+// Deliberately no activation-state filter: a key window in an inactive scene
+// beats no window (matches old UIApplication.windows behavior).
++ (UIWindow *)keyWindow {
+    UIWindow *keyWindow = nil;
+    for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+        if (![scene isKindOfClass:UIWindowScene.class]) continue;
+        for (UIWindow *window in ((UIWindowScene *)scene).windows) {
             if (window.isKeyWindow) {
                 keyWindow = window;
                 break;
             }
         }
-        root = keyWindow.rootViewController;
+        if (keyWindow) break;
+    }
+    return keyWindow;
+}
+
++ (UIViewController *)topViewController:(UIViewController *)root {
+    if (!root) {
+        root = [self keyWindow].rootViewController;
     }
     while (root.presentedViewController) root = root.presentedViewController;
     if ([root isKindOfClass:UINavigationController.class])
-        return YouModTopViewController(((UINavigationController *)root).topViewController);
+        return [self topViewController:((UINavigationController *)root).topViewController];
     else if ([root isKindOfClass:UITabBarController.class])
-        return YouModTopViewController(((UITabBarController *)root).selectedViewController);
+        return [self topViewController:((UITabBarController *)root).selectedViewController];
     return root;
 }
 
-// OLEDKeyboard (https://github.com/dayanch96/OledKeyboard)
-BOOL isDarkMode(UIView *view) {
+// respondsToSelector:: _mapkit_isDarkModeEnabled is an optional private helper.
++ (BOOL)isDarkMode:(UIView *)view {
     if ([view respondsToSelector:@selector(_mapkit_isDarkModeEnabled)]) return view._mapkit_isDarkModeEnabled;
     return view.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark;
 }
 
-BOOL isPad() {
++ (BOOL)isPad {
     return UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad;
 }
 
-void YouModConfigureSharePopover(UIActivityViewController *activityVC, UIView *sourceView) {
-    if (isPad() && activityVC) {
-        UIView *targetView = sourceView ?: YouModTopViewController(nil).view;
++ (BOOL)isPadHardware {
+    return [UIDevice.currentDevice.model isEqualToString:@"iPad"];
+}
+
++ (void)configureSharePopover:(UIActivityViewController *)activityVC sourceView:(UIView *)sourceView {
+    if ([self isPad] && activityVC) {
+        UIView *targetView = sourceView ?: [self topViewController:nil].view;
         if (targetView) {
             activityVC.popoverPresentationController.sourceView = targetView;
             CGRect bounds = targetView.bounds;
@@ -131,16 +166,23 @@ void YouModConfigureSharePopover(UIActivityViewController *activityVC, UIView *s
     }
 }
 
-NSString *YMExtractYouTubeVideoID(NSString *urlString) {
++ (NSString *)extractYouTubeVideoID:(NSString *)urlString {
     if (!urlString || urlString.length == 0) return nil;
     NSString *cleanString = [urlString stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
     if (cleanString.length == 11 && ![cleanString containsString:@"/"] && ![cleanString containsString:@"?"]) return cleanString;
+
+    static NSRegularExpression *thumbRegex = nil; // thumbnail URLs: /vi/<id>/… or /vi_webp/<id>/…
+    static NSRegularExpression *anyRegex = nil;   // fallback: v= | /shorts|live|clip/ | youtu.be/ | /vi…
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        thumbRegex = [NSRegularExpression regularExpressionWithPattern:@"\\/vi(?:_webp)?\\/([a-zA-Z0-9_-]{11})" options:NSRegularExpressionCaseInsensitive error:nil];
+        anyRegex = [NSRegularExpression regularExpressionWithPattern:@"(?:v=|\\/(?:shorts|live|clip)\\/|youtu\\.be\\/|\\/vi(?:_webp)?\\/)([a-zA-Z0-9_-]{11})" options:NSRegularExpressionCaseInsensitive error:nil];
+    });
+
     NSString *extractedID = nil;
     NSURL *url = [NSURL URLWithString:cleanString];
     if (url) {
         if ([url.host containsString:@"ytimg.com"]) {
-            // Thumbnail URLs: /vi/<id>/... or /vi_webp/<id>/...
-            NSRegularExpression *thumbRegex = [NSRegularExpression regularExpressionWithPattern:@"\\/vi(?:_webp)?\\/([a-zA-Z0-9_-]{11})" options:NSRegularExpressionCaseInsensitive error:nil];
             NSTextCheckingResult *hit = [thumbRegex firstMatchInString:url.path options:0 range:NSMakeRange(0, url.path.length)];
             if (hit && hit.numberOfRanges > 1) extractedID = [url.path substringWithRange:[hit rangeAtIndex:1]];
         } else if ([url.host containsString:@"youtu.be"]) {
@@ -163,12 +205,10 @@ NSString *YMExtractYouTubeVideoID(NSString *urlString) {
         }
     }
     if (!extractedID) {
-        NSError *error = nil;
-        NSRegularExpression *regex = [NSRegularExpression regularExpressionWithPattern:@"(?:v=|\\/(?:shorts|live|clip)\\/|youtu\\.be\\/|\\/vi(?:_webp)?\\/)([a-zA-Z0-9_-]{11})"
-                                                                                options:NSRegularExpressionCaseInsensitive
-                                                                                  error:&error];
-        NSTextCheckingResult *match = [regex firstMatchInString:cleanString options:0 range:NSMakeRange(0, cleanString.length)];
+        NSTextCheckingResult *match = [anyRegex firstMatchInString:cleanString options:0 range:NSMakeRange(0, cleanString.length)];
         if (match && match.numberOfRanges > 1) extractedID = [cleanString substringWithRange:[match rangeAtIndex:1]];
     }
     return (extractedID && extractedID.length == 11) ? extractedID : @"";
 }
+
+@end

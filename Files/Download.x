@@ -225,16 +225,16 @@ static id YouModDownloadParentResponder = nil;
     NSString *all = [NSString stringWithFormat:@"%@ - %@\n%@", author, title, description];
 
     NSMutableArray *items = [NSMutableArray array];
-    [items addObject:[YouModMenuItem itemWithTitle:LOC(@"COPY_ALL_VID_INFO") subtitle:nil icon:YouModYTIconImage(250, NO, nil) handler:^{
+    [items addObject:[YouModMenuItem itemWithTitle:LOC(@"COPY_ALL_VID_INFO") subtitle:nil icon:[YMHelpers ytIconImage:250 useCustomColor:NO customColor:nil] handler:^{
         [self copyTextToPasteboard:all successKey:@"COPIED_VID_INFO"];
     }]];
-    [items addObject:[YouModMenuItem itemWithTitle:LOC(@"COPY_AUTHOR") subtitle:nil icon:YouModYTIconImage(250, NO, nil) handler:^{
+    [items addObject:[YouModMenuItem itemWithTitle:LOC(@"COPY_AUTHOR") subtitle:nil icon:[YMHelpers ytIconImage:250 useCustomColor:NO customColor:nil] handler:^{
         [self copyTextToPasteboard:author successKey:@"COPIED_AUTHOR"];
     }]];
-    [items addObject:[YouModMenuItem itemWithTitle:LOC(@"COPY_TITLE") subtitle:nil icon:YouModYTIconImage(250, NO, nil) handler:^{
+    [items addObject:[YouModMenuItem itemWithTitle:LOC(@"COPY_TITLE") subtitle:nil icon:[YMHelpers ytIconImage:250 useCustomColor:NO customColor:nil] handler:^{
         [self copyTextToPasteboard:title successKey:@"COPIED_TITLE"];
     }]];
-    [items addObject:[YouModMenuItem itemWithTitle:LOC(@"COPY_DESCRIPTION") subtitle:nil icon:YouModYTIconImage(250, NO, nil) handler:^{
+    [items addObject:[YouModMenuItem itemWithTitle:LOC(@"COPY_DESCRIPTION") subtitle:nil icon:[YMHelpers ytIconImage:250 useCustomColor:NO customColor:nil] handler:^{
         [self copyTextToPasteboard:description successKey:@"COPIED_DESCRIPTION"];
     }]];
 
@@ -244,13 +244,13 @@ static id YouModDownloadParentResponder = nil;
 + (void)showThumbnailSheetForPlayer:(YTPlayerViewController *)player presenter:(UIViewController *)presenter sender:(UIView *)sender {
     NSMutableArray *items = [NSMutableArray array];
 
-    [items addObject:[YouModMenuItem itemWithTitle:LOC(@"SAVE_THUMBNAIL") subtitle:nil icon:YouModYTIconImage(57, NO, nil) handler:^{
+    [items addObject:[YouModMenuItem itemWithTitle:LOC(@"SAVE_THUMBNAIL") subtitle:nil icon:[YMHelpers ytIconImage:57 useCustomColor:NO customColor:nil] handler:^{
         [self downloadThumbnailForPlayer:player presenter:presenter];
     }]];
-    [items addObject:[YouModMenuItem itemWithTitle:LOC(@"SHOW_THUMBNAIL") subtitle:nil icon:YouModYTIconImage(208, NO, nil) handler:^{
+    [items addObject:[YouModMenuItem itemWithTitle:LOC(@"SHOW_THUMBNAIL") subtitle:nil icon:[YMHelpers ytIconImage:208 useCustomColor:NO customColor:nil] handler:^{
         [self showThumbnailViewerForPlayer:player presenter:presenter];
     }]];
-    [items addObject:[YouModMenuItem itemWithTitle:LOC(@"COPY_THUMBNAIL") subtitle:nil icon:YouModYTIconImage(250, NO, nil) handler:^{
+    [items addObject:[YouModMenuItem itemWithTitle:LOC(@"COPY_THUMBNAIL") subtitle:nil icon:[YMHelpers ytIconImage:250 useCustomColor:NO customColor:nil] handler:^{
         [self copyThumbnailForPlayer:player presenter:presenter];
     }]];
 
@@ -267,17 +267,17 @@ static id YouModDownloadParentResponder = nil;
     YTSingleVideo *sgvid = sgvidcon.singleVideo;
 
     if (!sgvid.isLivePlayback) {
-        [items addObject:[YouModMenuItem itemWithTitle:LOC(@"DOWNLOAD_TO_PHOTOS") subtitle:nil icon:YouModYTIconImage(57, NO, nil) handler:^{
+        [items addObject:[YouModMenuItem itemWithTitle:LOC(@"DOWNLOAD_TO_PHOTOS") subtitle:nil icon:[YMHelpers ytIconImage:57 useCustomColor:NO customColor:nil] handler:^{
             [YMDownloadSheet presentForPlayer:player destination:YMDownloadDestinationPhotos isShorts:isShorts presenter:presenter];
         }]];
-        [items addObject:[YouModMenuItem itemWithTitle:LOC(@"DOWNLOAD_TO_FILES") subtitle:LOC(@"DOWNLOAD_TO_FILES_DESC") icon:YouModYTIconImage(isShorts ? 769 : 658, NO, nil) handler:^{
+        [items addObject:[YouModMenuItem itemWithTitle:LOC(@"DOWNLOAD_TO_FILES") subtitle:LOC(@"DOWNLOAD_TO_FILES_DESC") icon:[YMHelpers ytIconImage:isShorts ? 769 : 658 useCustomColor:NO customColor:nil] handler:^{
             [YMDownloadSheet presentForPlayer:player destination:YMDownloadDestinationFiles isShorts:isShorts presenter:presenter];
         }]];
     }
-    [items addObject:[YouModMenuItem itemWithTitle:LOC(@"DOWNLOAD_THUMBNAIL") subtitle:nil icon:YouModYTIconImage(367, NO, nil) handler:^{
+    [items addObject:[YouModMenuItem itemWithTitle:LOC(@"DOWNLOAD_THUMBNAIL") subtitle:nil icon:[YMHelpers ytIconImage:367 useCustomColor:NO customColor:nil] handler:^{
         [self showThumbnailSheetForPlayer:player presenter:presenter sender:sender];
     }]];
-    [items addObject:[YouModMenuItem itemWithTitle:LOC(@"COPY_VID_INFO") subtitle:nil icon:YouModYTIconImage(250, NO, nil) handler:^{
+    [items addObject:[YouModMenuItem itemWithTitle:LOC(@"COPY_VID_INFO") subtitle:nil icon:[YMHelpers ytIconImage:250 useCustomColor:NO customColor:nil] handler:^{
         [self showCopyVideoInfoSheetForPlayer:player presenter:presenter sender:sender];
     }]];
     [self presentMenuForPlayer:player items:items presenter:presenter sender:sender];
@@ -476,7 +476,7 @@ NSString *YouModGlobalAuthHeader = nil;
 + (UIImage *)renderImageFromView:(_ASDisplayView *)view {
     if (!view || view.bounds.size.width <= 0 || view.bounds.size.height <= 0) return nil;
     
-    UIColor *realBgColor = isDarkMode(view) ? [%c(YTColor) black3] : [%c(YTColor) white1];  
+    UIColor *realBgColor = [YMHelpers isDarkMode:view] ? [%c(YTColor) black3] : [%c(YTColor) white1];  
     UIGraphicsBeginImageContextWithOptions(view.bounds.size, NO, [UIScreen mainScreen].scale);
     CGContextRef context = UIGraphicsGetCurrentContext();    
     [realBgColor setFill];
@@ -527,17 +527,17 @@ NSString *YouModGlobalAuthHeader = nil;
     NSString *commentText = [self extractCommentTextFromView:view isPost:NO];
 
     if (commentText && commentText.length > 0) {
-        [items addObject:[YouModMenuItem itemWithTitle:LOC(@"TRANSLATE_COMMENT") subtitle:nil icon:YouModYTIconImage(897, NO, nil) handler:^{
+        [items addObject:[YouModMenuItem itemWithTitle:LOC(@"TRANSLATE_COMMENT") subtitle:nil icon:[YMHelpers ytIconImage:897 useCustomColor:NO customColor:nil] handler:^{
             UIViewController *presenter = view._viewControllerForAncestor;
             [self showTranslationDialog:commentText presenter:presenter];
         }]];
 
-        [items addObject:[YouModMenuItem itemWithTitle:LOC(@"COPY_COMMENT_TEXT") subtitle:nil icon:YouModYTIconImage(243, NO, nil) handler:^{
+        [items addObject:[YouModMenuItem itemWithTitle:LOC(@"COPY_COMMENT_TEXT") subtitle:nil icon:[YMHelpers ytIconImage:243 useCustomColor:NO customColor:nil] handler:^{
             [self copyTextToPasteboard:commentText successKey:@"COPIED_TO_CLIPBOARD"];
         }]];
     }
 
-    [items addObject:[YouModMenuItem itemWithTitle:LOC(@"SAVE_COMMENT_IMAGE") subtitle:nil icon:YouModYTIconImage(367, NO, nil) handler:^{
+    [items addObject:[YouModMenuItem itemWithTitle:LOC(@"SAVE_COMMENT_IMAGE") subtitle:nil icon:[YMHelpers ytIconImage:367 useCustomColor:NO customColor:nil] handler:^{
         UIImage *image = [self renderImageFromView:view];
         if (image) {
             UIViewController *p = view._viewControllerForAncestor;
@@ -545,7 +545,7 @@ NSString *YouModGlobalAuthHeader = nil;
         }
     }]];
 
-    [items addObject:[YouModMenuItem itemWithTitle:LOC(@"COPY_COMMENT_IMAGE") subtitle:nil icon:YouModYTIconImage(208, NO, nil) handler:^{
+    [items addObject:[YouModMenuItem itemWithTitle:LOC(@"COPY_COMMENT_IMAGE") subtitle:nil icon:[YMHelpers ytIconImage:208 useCustomColor:NO customColor:nil] handler:^{
         UIImage *image = [self renderImageFromView:view];
         if (image) {
             [self copyImageToPasteboard:image successKey:@"COPIED_TO_CLIPBOARD"];
@@ -563,17 +563,17 @@ NSString *YouModGlobalAuthHeader = nil;
     NSString *postText = [self extractCommentTextFromView:view isPost:YES];
 
     if (postText && postText.length > 0) {
-        [items addObject:[YouModMenuItem itemWithTitle:LOC(@"TRANSLATE_POST") subtitle:nil icon:YouModYTIconImage(897, NO, nil) handler:^{
+        [items addObject:[YouModMenuItem itemWithTitle:LOC(@"TRANSLATE_POST") subtitle:nil icon:[YMHelpers ytIconImage:897 useCustomColor:NO customColor:nil] handler:^{
             UIViewController *presenter = view._viewControllerForAncestor;
             [self showTranslationDialog:postText presenter:presenter];
         }]];
 
-        [items addObject:[YouModMenuItem itemWithTitle:LOC(@"COPY_POST_TEXT") subtitle:nil icon:YouModYTIconImage(243, NO, nil) handler:^{
+        [items addObject:[YouModMenuItem itemWithTitle:LOC(@"COPY_POST_TEXT") subtitle:nil icon:[YMHelpers ytIconImage:243 useCustomColor:NO customColor:nil] handler:^{
             [self copyTextToPasteboard:postText successKey:@"COPIED_TO_CLIPBOARD"];
         }]];
     }
 
-    [items addObject:[YouModMenuItem itemWithTitle:LOC(@"SAVE_POST_IMAGE") subtitle:nil icon:YouModYTIconImage(367, NO, nil) handler:^{
+    [items addObject:[YouModMenuItem itemWithTitle:LOC(@"SAVE_POST_IMAGE") subtitle:nil icon:[YMHelpers ytIconImage:367 useCustomColor:NO customColor:nil] handler:^{
         UIImage *image = [self renderImageFromView:view];
         if (image) {
             UIViewController *p = view._viewControllerForAncestor;
@@ -581,7 +581,7 @@ NSString *YouModGlobalAuthHeader = nil;
         }
     }]];
 
-    [items addObject:[YouModMenuItem itemWithTitle:LOC(@"COPY_POST_IMAGE") subtitle:nil icon:YouModYTIconImage(208, NO, nil) handler:^{
+    [items addObject:[YouModMenuItem itemWithTitle:LOC(@"COPY_POST_IMAGE") subtitle:nil icon:[YMHelpers ytIconImage:208 useCustomColor:NO customColor:nil] handler:^{
         UIImage *image = [self renderImageFromView:view];
         if (image) {
             [self copyImageToPasteboard:image successKey:@"COPIED_TO_CLIPBOARD"];
@@ -622,6 +622,23 @@ void YouModHandleDownloadButtonAction(_ASDisplayView *view) {
     [YouModDownloadActions handleDownloadButtonForView:view];
 }
 
+static UIView *YouModFindMoreButton(UIView *view) {
+    if ([view.accessibilityIdentifier isEqualToString:@"id.reel_more_button"]) return view;
+    for (UIView *sub in view.subviews) {
+        UIView *found = YouModFindMoreButton(sub);
+        if (found) return found;
+    }
+    return nil;
+}
+
+%hook YTReelTopBarView
+- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
+    UIView *btn = [self viewWithTag:1501];
+    if (btn && !btn.hidden && btn.alpha > 0.01 && CGRectContainsPoint(CGRectInset(btn.bounds, -10, -10), [btn convertPoint:point fromView:self])) return btn;
+    return %orig;
+}
+%end
+
 %hook YTReelWatchRootViewController
 - (void)viewDidLayoutSubviews {
     %orig;
@@ -651,23 +668,57 @@ void YouModHandleDownloadButtonAction(_ASDisplayView *view) {
         return;
     }
     if (!downloadBtn) {
-        UIImageSymbolConfiguration *config = [UIImageSymbolConfiguration configurationWithPointSize:20 weight:UIImageSymbolWeightMedium];
-        UIImage *icon = [UIImage systemImageNamed:@"arrow.down.circle" withConfiguration:config];
-        downloadBtn = [%c(YTQTMButton) iconButton];
-        [downloadBtn setImage:icon forState:UIControlStateNormal];
-        [downloadBtn setTintColor:[UIColor whiteColor]];
+        UIImageSymbolConfiguration *config = [UIImageSymbolConfiguration configurationWithPointSize:20 weight:UIImageSymbolWeightSemibold];
+        downloadBtn = (YTQTMButton *)[UIButton buttonWithType:UIButtonTypeCustom];
+        [downloadBtn setImage:[UIImage systemImageNamed:@"arrow.down" withConfiguration:config] forState:UIControlStateNormal];
+        downloadBtn.tintColor = [UIColor whiteColor];
         downloadBtn.exclusiveTouch = YES;
         downloadBtn.tag = 1501;
+        downloadBtn.frame = CGRectMake(0, 0, 24, 24);
+        YTTouchFeedbackView *feedback = [[%c(YTTouchFeedbackView) alloc] init];
+        feedback.userInteractionEnabled = NO;
+        feedback.forceCircularTouchFeedback = YES;
+        feedback.tag = 1502;
+        [feedback attachToViewBelowSubviews:downloadBtn];
+        [downloadBtn addTarget:self action:@selector(youModShortsDownloadTouchDown:) forControlEvents:UIControlEventTouchDown];
+        [downloadBtn addTarget:self action:@selector(youModShortsDownloadTouchUp:) forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside | UIControlEventTouchCancel];
         [downloadBtn addTarget:self action:@selector(didTapYouModShortsDownload:) forControlEvents:UIControlEventTouchUpInside];
-        [rootView addSubview:downloadBtn];
     }
-    CGRect rect = [topView convertRect:topView.bounds toView:rootView];
+    UIView *header = [topView isKindOfClass:%c(YTReelTopBarView)] ? [topView valueForKey:@"_headerView"] : nil;
+    UIView *dots = header ? YouModFindMoreButton(header) : nil;
+    if (header && !dots) {
+        downloadBtn.hidden = YES;
+        UIView *view = rootView;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            if (view.window) [view setNeedsLayout];
+        });
+        return;
+    }
+    if (dots) {
+        UIView *container = dots.superview;
+        if (downloadBtn.superview != container) [container addSubview:downloadBtn];
+        downloadBtn.hidden = NO;
+        downloadBtn.frame = CGRectMake(CGRectGetMinX(dots.frame), CGRectGetMinY(dots.frame) + 48, 24, 24);
+        [container bringSubviewToFront:downloadBtn];
+        return;
+    }
+    UIView *anchor = header ?: topView;
+    if (downloadBtn.superview != rootView) [rootView addSubview:downloadBtn];
+    CGRect rect = [anchor convertRect:anchor.bounds toView:rootView];
     downloadBtn.frame = CGRectMake(CGRectGetMaxX(rect) - 50, CGRectGetMaxY(rect) + 8, 40, 40);
     [rootView bringSubviewToFront:downloadBtn];
 }
 %new
+- (void)youModShortsDownloadTouchDown:(UIButton *)button {
+    [(YTTouchFeedbackView *)[button viewWithTag:1502] startTouchBeganAnimation];
+}
+%new
+- (void)youModShortsDownloadTouchUp:(UIButton *)button {
+    [(YTTouchFeedbackView *)[button viewWithTag:1502] startTouchEndedAnimationWithCompletion:nil];
+}
+%new
 - (void)didTapYouModShortsDownload:(YTQTMButton *)button {
-    YTReelWatchRootViewController *presenter = (YTReelWatchRootViewController *)button._viewControllerForAncestor;
+    YTReelWatchRootViewController *presenter = self;
     YouModDownloadParentResponder = [presenter valueForKey:@"_parentResponder"];
     [YouModDownloadActions showDownloadManagerForPlayer:presenter.player presenter:presenter sender:button isShorts:YES];
 }

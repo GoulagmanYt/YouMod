@@ -3,6 +3,19 @@
 
 static const void *kYMLiquidGlassBackdropKey = &kYMLiquidGlassBackdropKey;
 
+// sdk check for older yt versions: below 26 there is no Liquid Glass, so
+// the same hooks fall back to a flat gray fill instead.
+BOOL YMHostBundleSupportsLiquidGlass(void) {
+    static BOOL supported = NO;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        NSString *platformVersion = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"DTPlatformVersion"];
+        supported = platformVersion != nil &&
+                    [platformVersion compare:@"26.0" options:NSNumericSearch] != NSOrderedAscending && IS_ENABLED(LiquidGlass);
+    });
+    return supported;
+}
+
 static UIVisualEffect *YMCreateSystemBarGlassEffect(void) {
     Class glass = %c(UIGlassEffect);
     SEL selector = @selector(effectWithStyle:);
@@ -13,44 +26,66 @@ static UIVisualEffect *YMCreateSystemBarGlassEffect(void) {
     return nil;
 }
 
-static UIVisualEffectView *YMEnsureGlassBackdrop(UIView *view) {
-    UIVisualEffectView *glassView = objc_getAssociatedObject(view, kYMLiquidGlassBackdropKey);
-    if (!glassView) {
-        UIVisualEffect *effect = YMCreateSystemBarGlassEffect();
-        if (!effect) effect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterial];
-        glassView = [[UIVisualEffectView alloc] initWithEffect:effect];
-        glassView.userInteractionEnabled = NO;
-        glassView.isAccessibilityElement = NO;
-        glassView.accessibilityElementsHidden = YES;
-        [view insertSubview:glassView atIndex:0];
+// Pre-Liquid-Glass fallback rounding — matches YouTube's search bar (shared constant).
+static CGFloat const YMGlassFallbackCornerRadius = YMCornerRadiusSearchBar;
+
+// Flat gray fill that tracks its host's rounded corners. Hosts usually pin
+// their cornerRadius after the backdrop is installed and don't clip subviews,
+// so a plain square fill would poke past the rounding and override it.
+@implementation YMGlassBackdropView
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    CALayer *hostLayer = self.superview.layer;
+    if (!hostLayer) return;
+    if (self.layer.cornerRadius != hostLayer.cornerRadius) self.layer.cornerRadius = hostLayer.cornerRadius;
+    if (self.layer.cornerCurve != hostLayer.cornerCurve) self.layer.cornerCurve = hostLayer.cornerCurve;
+}
+@end
+
+static UIView *YMEnsureGlassBackdrop(UIView *view) {
+    UIView *backdrop = objc_getAssociatedObject(view, kYMLiquidGlassBackdropKey);
+    if (!backdrop) {
+        if (YMHostBundleSupportsLiquidGlass()) {
+            UIVisualEffect *effect = YMCreateSystemBarGlassEffect();
+            if (!effect) effect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterial];
+            UIVisualEffectView *glassView = [[UIVisualEffectView alloc] initWithEffect:effect];
+            glassView.userInteractionEnabled = NO;
+            glassView.isAccessibilityElement = NO;
+            glassView.accessibilityElementsHidden = YES;
+            backdrop = glassView;
+        } else {
+            // Pre-Liquid-Glass host: flat gray fill — the same dynamic gray the
+            // settings / download-library search fields use — instead of
+            // YouTube's frosted glass blur.
+            YMGlassBackdropView *fill = [YMGlassBackdropView new];
+            fill.backgroundColor = [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *trait) {
+                return (trait.userInterfaceStyle == UIUserInterfaceStyleDark) ? [UIColor secondarySystemBackgroundColor] : [UIColor systemGray5Color];
+            }];
+            // Hosts that already carry their rounding (e.g. the SB pill) get it
+            // immediately; pins applied later are picked up in layoutSubviews.
+            fill.layer.cornerRadius = view.layer.cornerRadius;
+            backdrop = fill;
+            backdrop.userInteractionEnabled = NO;
+            backdrop.isAccessibilityElement = NO;
+            backdrop.accessibilityElementsHidden = YES;
+        }
+        [view insertSubview:backdrop atIndex:0];
         // Flexible: pinned on all sides so the glass stretches with the host while
         // it is dragged or resized — no manual frame syncing needed.
-        glassView.translatesAutoresizingMaskIntoConstraints = NO;
+        backdrop.translatesAutoresizingMaskIntoConstraints = NO;
         [NSLayoutConstraint activateConstraints:@[
-            [glassView.leadingAnchor constraintEqualToAnchor:view.leadingAnchor],
-            [glassView.trailingAnchor constraintEqualToAnchor:view.trailingAnchor],
-            [glassView.topAnchor constraintEqualToAnchor:view.topAnchor],
-            [glassView.bottomAnchor constraintEqualToAnchor:view.bottomAnchor],
+            [backdrop.leadingAnchor constraintEqualToAnchor:view.leadingAnchor],
+            [backdrop.trailingAnchor constraintEqualToAnchor:view.trailingAnchor],
+            [backdrop.topAnchor constraintEqualToAnchor:view.topAnchor],
+            [backdrop.bottomAnchor constraintEqualToAnchor:view.bottomAnchor],
         ]];
-        objc_setAssociatedObject(view, kYMLiquidGlassBackdropKey, glassView, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(view, kYMLiquidGlassBackdropKey, backdrop, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
-    return glassView;
+    return backdrop;
 }
 
-void YouModApplyLiquidGlassBackdropToView(UIView *view, CGFloat cornerRadius) {
-    if (!view) return;
-    YMEnsureGlassBackdrop(view);
-    view.backgroundColor = UIColor.clearColor;
-    view.layer.cornerRadius = cornerRadius;
-    view.layer.cornerCurve = kCACornerCurveContinuous;
-    view.layer.masksToBounds = YES;
-    BOOL dark = view.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark;
-    UIColor *edgeColor = [(dark ? UIColor.whiteColor : UIColor.blackColor) colorWithAlphaComponent:dark ? 0.20 : 0.10];
-    view.layer.borderWidth = 0.5;
-    view.layer.borderColor = edgeColor.CGColor;
-}
-
-// Frosted panel background for dialogs: manual glass blur over a light-gray base.
+// Panel background for dialogs: glass blur over a light-gray base on iOS 26
+// SDK hosts; flat gray (search-field gray) on pre-26 ones.
 void YouModApplyFrostedPanelBackgroundToView(UIView *view) {
     if (!view) return;
     YMEnsureGlassBackdrop(view);
@@ -58,10 +93,52 @@ void YouModApplyFrostedPanelBackgroundToView(UIView *view) {
 }
 
 void YouModApplyLiquidGlassToView(UIView *view, BOOL wantsBackground) {
-    if (wantsBackground && [view respondsToSelector:@selector(tuui_applyFlexibleClearGlassWithShadowBackground)]) [view tuui_applyFlexibleClearGlassWithShadowBackground];
-    else if (!wantsBackground && [view respondsToSelector:@selector(tuui_applyFlexibleSmallGlassBackground)]) [view tuui_applyFlexibleSmallGlassBackground];
+    if (!view) return;
+    BOOL glassHost = YMHostBundleSupportsLiquidGlass();
+    if (glassHost) {
+        view.layer.cornerRadius = CGRectGetHeight(view.bounds) / 2.0;
+    } else if (view.layer.cornerRadius == 0) {
+        // Pre-Liquid-Glass host: round the flat gray fill like YouTube's search
+        // bar instead of a capsule. Views that pin their own radius (the library
+        // type pills, panels) keep it.
+        view.layer.cornerRadius = YMGlassFallbackCornerRadius;
+    }
+    if ([view isKindOfClass:%c(YTLightweightQTMButton)]) {
+        UIView *feedback = [view valueForKey:@"_touchFeedbackView"];
+        feedback.hidden = YES;
+        feedback.alpha = 0;
+        for (UIView *sub in view.subviews) {
+            if ([sub isKindOfClass:%c(YTTouchFeedbackView)]) {
+                sub.hidden = YES;
+                sub.alpha = 0;
+                break;
+            }
+        }
+        for (UIGestureRecognizer *ges in view.gestureRecognizers) {
+            if ([ges isKindOfClass:%c(YTTouchFeedbackGestureRecognizer)]) {
+                @try {
+                    UIView *view2 = [[ges valueForKey:@"_controller"] valueForKey:@"_touchFeedbackView"];
+                    view2.hidden = YES;
+                    view2.alpha = 0;
+                } @catch (id ex2) {}
+                break;
+            }
+        }
+        ((YTLightweightQTMButton *)view).flatButtonHasOpaqueBackground = NO;
+        @try {
+            ((YTLightweightQTMButton *)view).disableTouchResponse = YES;
+        } @catch (id ex) {}
+    }
+    if (glassHost) {
+        if (wantsBackground && [view respondsToSelector:@selector(tuui_applyFlexibleClearGlassWithShadowBackground)]) [view tuui_applyFlexibleClearGlassWithShadowBackground];
+        else if (!wantsBackground && [view respondsToSelector:@selector(tuui_applyFlexibleSmallGlassBackground)]) [view tuui_applyFlexibleSmallGlassBackground];
+    } else if (wantsBackground) {
+        // Pre-Liquid-Glass host: YTFrostedGlassView backdrop instead of tuui_* glass.
+        YMEnsureGlassBackdrop(view);
+    }
 }
 
+%group Glass
 %hook YTChipCloudChipView
 - (void)didMoveToWindow {
     %orig;
@@ -71,9 +148,42 @@ void YouModApplyLiquidGlassToView(UIView *view, BOOL wantsBackground) {
 %end
 
 %hook YTRightNavigationButtons
-- (void)layoutSubviews {
+- (NSArray <YTQTMButton *> *)visibleButtons {
+    NSArray <YTQTMButton *> *buttons = %orig;
+    YouModApplyLiquidGlassToView(self, YES);
+    for (YTQTMButton *button in buttons) {
+        UIView *feedback = [button valueForKey:@"_touchFeedbackView"];
+        feedback.hidden = YES;
+        feedback.alpha = 0;
+        for (UIGestureRecognizer *ges in button.gestureRecognizers) {
+            if ([ges isKindOfClass:%c(YTTouchFeedbackGestureRecognizer)]) {
+                @try {
+                    UIView *view = [[ges valueForKey:@"_controller"] valueForKey:@"_touchFeedbackView"];
+                    view.hidden = YES;
+                    view.alpha = 0;
+                } @catch (id ex) {}
+                break;
+            }
+        }
+        button.flatButtonHasOpaqueBackground = NO;
+        @try {
+            button.disableTouchResponse = YES;
+        } @catch (id ex) {}
+    }
+    return buttons;
+}
+- (void)setLeadingPadding:(CGFloat)padding { %orig(0); }
+- (void)setTailingPadding:(CGFloat)padding { %orig(0); }
+%end
+
+%hook YTSearchViewController
+- (void)viewWillAppear:(BOOL)animated {
     %orig;
-    YouModApplyLiquidGlassBackdropToView(self, CGRectGetHeight(self.bounds) / 2.0);
+    UIView *voiceView = [self valueForKey:@"_voiceButtonContainerView"];
+    for (UIView *sub in voiceView.subviews) {
+        if (![sub isKindOfClass:%c(UIButton)]) [sub removeFromSuperview];
+        else YouModApplyLiquidGlassToView(sub, YES);
+    }
 }
 %end
 
@@ -96,13 +206,6 @@ void YouModApplyLiquidGlassToView(UIView *view, BOOL wantsBackground) {
 }
 %end
 
-%hook YTSearchBarView
-- (void)didMoveToWindow {
-    %orig;
-    YouModApplyLiquidGlassToView(self, YES);
-}
-%end
-
 %hook GSKRedMicButton
 - (void)didMoveToWindow {
     %orig;
@@ -115,6 +218,14 @@ void YouModApplyLiquidGlassToView(UIView *view, BOOL wantsBackground) {
     YTQTMButton *orig = %orig;
     if (orig) YouModApplyLiquidGlassToView(orig, YES);
     return orig;
+}
+%end
+
+%hook YTInlineSignInChannelCell
+- (void)didMoveToWindow {
+    %orig;
+    YTQTMButton *button = [self valueForKey:@"_editChannelButton"];
+    if (button) YouModApplyLiquidGlassToView(button, YES);
 }
 %end
 
@@ -142,6 +253,7 @@ void YouModApplyLiquidGlassToView(UIView *view, BOOL wantsBackground) {
     %orig;
 }
 %end
+%end
 
 static float YMSeekStartValue;
 
@@ -156,13 +268,13 @@ static float YMSeekStartValue;
         [self addGestureRecognizer:self.ymSeekPan];
     }
 }
-%new
+%new(B@:@)
 - (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)gesture {
     if (gesture != self.ymSeekPan) return YES;
     CGPoint velocity = [(UIPanGestureRecognizer *)gesture velocityInView:self];
     return fabs(velocity.x) > fabs(velocity.y);
 }
-%new
+%new(v@:@)
 - (void)YouModHandleSeekPan:(UIPanGestureRecognizer *)gesture {
     UISlider *slider = self.scrubberView.scrubber;
     if (!slider) return;
@@ -189,3 +301,11 @@ static float YMSeekStartValue;
     }
 }
 %end
+
+%ctor {
+    [[NSUserDefaults standardUserDefaults] registerDefaults:@{
+        LiquidGlass: @YES
+    }];
+    %init;
+    if (YMHostBundleSupportsLiquidGlass()) %init(Glass);
+}

@@ -1,5 +1,9 @@
 #import "Headers.h"
 
+UIViewController *YouModAppViewController() {
+    return [[[UIApplication sharedApplication] delegate] window].rootViewController;
+}
+
 // Enables shorts quality - works best with YTClassicVideoQuality
 %hook YTHotConfig
 - (BOOL)enableOmitAdvancedMenuInShortsVideoQualityPicker { return IS_ENABLED(EnablesShortsQuality) ? YES : %orig; }
@@ -27,14 +31,6 @@
 - (BOOL)mobileShortsTabInlinedExpandWatchOnDismiss { return IS_ENABLED(ShowShortsSeekbar) ? YES : %orig; }
 %end
 
-static void YouModMakeAShortsAction(YTReelPlayerViewController *self, YTSingleVideoController *video, YTSingleVideoTime *time) {
-    if (INTFORVAL(ShortsActionIndex) == 0) return;
-    if (floor(time.time) >= floor(video.totalMediaTime)) {
-        if (INTFORVAL(ShortsActionIndex) == 1) [self reelContentViewRequestsAdvanceToNextVideo:nil];
-        else if (INTFORVAL(ShortsActionIndex) == 2) [self reelContentViewRequestsPlayPauseToggle:nil];
-    }
-}
-
 static BOOL isShortsOnlyOn = YES;
 static BOOL isFullscreenEnabled = NO;
 
@@ -46,28 +42,15 @@ static void YouModRemoveShortsOverlayButton(_ASDisplayView *dpView) {
         @"id.reel_share_button": @(IS_ENABLED(RemoveShortsShareButton)),
         @"id.reel_remix_button" : @(IS_ENABLED(RemoveShortsRemixButton)),
         @"id.reel_pivot_button": @(IS_ENABLED(RemoveShortsSoundMetadataButton)),
-        @"reel_save_button.eml" : @(IS_ENABLED(RemoveShortsSaveButton))
+        @"reel_save_button.eml" : @(IS_ENABLED(RemoveShortsSaveButton)),
+        @"id.reel_ask_button" : @(IS_ENABLED(RemoveShortsAskButton))
     };
     ASDisplayNode *node = dpView.keepalive_node;
     for (NSString *button in buttonsList) {
         if ([buttonsList[button] boolValue]) {
-            for (_ASDisplayView *sub in dpView.subviews) {
-                if ([sub.accessibilityIdentifier isEqualToString:button]) {
-                    [sub removeFromSuperview];
-                } else if (sub.accessibilityIdentifier == nil && sub.accessibilityLabel != nil && IS_ENABLED(RemoveShortsSaveButton)) {
-                    NSString *desc = nil;
-                    @try {
-                        desc = [[[sub.keepalive_node.nodeController performSelector:@selector(owningComponent)] performSelector:@selector(owningComponent)] description];
-                    } @catch (id ex) {
-                        continue;
-                    }
-                    if (desc != nil && [desc containsString:button]) [sub removeFromSuperview];
-                }
-            }
-            for (ASDisplayNode *child in [node.yogaChildren copy]) {
-                if ([[child description] containsString:button]) {
-                    [node removeYogaChild:child];
-                } else if (IS_ENABLED(RemoveShortsSaveButton)) {
+            for (ASDisplayNode *child in node.yogaChildren.copy) {
+                if ([child.description containsString:button]) [node removeYogaChild:child];
+                else if (IS_ENABLED(RemoveShortsSaveButton)) {
                     NSString *desc = nil;
                     @try {
                         desc = [[[[child nodeController] performSelector:@selector(owningComponent)] performSelector:@selector(owningComponent)] description];
@@ -84,27 +67,41 @@ static void YouModRemoveShortsOverlayButton(_ASDisplayView *dpView) {
 %hook YTReelPlayerViewController
 - (BOOL)shouldAlwaysEnablePlayerBar { return IS_ENABLED(ShowShortsSeekbar) ? YES : %orig; }
 - (BOOL)shouldEnablePlayerBarOnlyOnPause { return IS_ENABLED(ShowShortsSeekbar) ? NO : %orig; }
-- (void)singleVideo:(YTSingleVideoController *)video currentVideoTimeDidChange:(YTSingleVideoTime *)time {
-    %orig;
-    YouModMakeAShortsAction(self, video, time);
-}
 - (void)loadPlayerBar {
     %orig;
-    if ((isShortsOnlyOn && IS_ENABLED(ShortsOnly)) || (isFullscreenEnabled && IS_ENABLED(FullScreenShorts))) [[self valueForKey:@"_pivotBarProvider"] performSelector:@selector(hidePivotBar)];
+    if ((isShortsOnlyOn && IS_ENABLED(ShortsOnly)) || (isFullscreenEnabled && IS_ENABLED(FullScreenShorts))) [YouModAppViewController() performSelector:@selector(hidePivotBar)];
+    YTPlayerViewController *main = self.player;
+    if (INTFORVAL(CaptionTrack) != 0) [main performSelector:@selector(YouModAutoCaptions) withObject:nil afterDelay:0.5];
+    if (INTFORVAL(ShortsAutoSpeedIndex) != 0) [main performSelector:@selector(YouModSetAutoSpeed) withObject:nil afterDelay:0.5];
+}
+- (void)maybeLoopPlayback {
+    NSInteger action = INTFORVAL(ShortsActionIndex);
+    if (action == 1) [self reelContentViewRequestsAdvanceToNextVideo:nil];
+    else if (action == 2) [self reelContentViewRequestsPlayPauseToggle:nil];
+    else %orig;
+}
+%end
+
+// YT 21.4x: Shorts are hosted by YTReelContainerViewController + YTShortsContentPresenter, not YTReelPlayerViewController
+%hook YTReelContainerViewController
+- (void)handleLoopBehavior {
+    NSInteger action = INTFORVAL(ShortsActionIndex);
+    if (action == 1) [[self valueForKey:@"_delegate"] playbackSequentialItemControllerDidRequestNextReel:self isAutoAdvance:YES];
+    else if (action == 2) return;
+    else %orig;
+}
+- (void)setupPlayerForPiP { if (!IS_ENABLED(DisablesShortsPiP)) %orig; }
+- (void)loadPlayerBarAndShowIfNeeded {
+    %orig;
+    if ((isShortsOnlyOn && IS_ENABLED(ShortsOnly)) || (isFullscreenEnabled && IS_ENABLED(FullScreenShorts))) [YouModAppViewController() performSelector:@selector(hidePivotBar)];
     YTPlayerViewController *main = self.player;
     if (INTFORVAL(CaptionTrack) != 0) [main performSelector:@selector(YouModAutoCaptions) withObject:nil afterDelay:0.5];
     if (INTFORVAL(ShortsAutoSpeedIndex) != 0) [main performSelector:@selector(YouModSetAutoSpeed) withObject:nil afterDelay:0.5];
 }
 %end
 
-%hook YTReelContainerViewController
-- (void)loadPlayerBarAndShowIfNeeded {
-    %orig;
-    if ((isShortsOnlyOn && IS_ENABLED(ShortsOnly)) || (isFullscreenEnabled && IS_ENABLED(FullScreenShorts))) [[[self valueForKey:@"_delegate"] valueForKey:@"_pivotBarProvider"] performSelector:@selector(hidePivotBar)];
-    YTPlayerViewController *main = self.player;
-    if (INTFORVAL(CaptionTrack) != 0) [main performSelector:@selector(YouModAutoCaptions) withObject:nil afterDelay:0.5];
-    if (INTFORVAL(ShortsAutoSpeedIndex) != 0) [main performSelector:@selector(YouModSetAutoSpeed) withObject:nil afterDelay:0.5];
-}
+%hook YTReelPlayerBarIntegrationController
+- (void)updatePlayerBarVisibility:(BOOL)visible { %orig(IS_ENABLED(ShowShortsSeekbar) ? YES : visible); }
 %end
 
 %hook YTReelTopBarView
@@ -135,10 +132,9 @@ void YouModRemoveShortsPausedButtons(_ASDisplayView *self, NSString *iden) {
     for (NSString *button in buttonsList) {
         if ([buttonsList[button] boolValue] && [iden isEqualToString:button]) {
             ASDisplayNode *node = view.scrollNode;
-            for (id child in node.yogaChildren) {
-                if ([[child description] containsString:button]) {
+            for (ASDisplayNode *child in node.yogaChildren) {
+                if ([child.description containsString:button]) {
                     [node removeYogaChild:child];
-                    [self removeFromSuperview];
                     break;
                 }
             }
@@ -170,18 +166,18 @@ void YouModFilterShortsDisplayView(_ASDisplayView *view, NSString *iden) {
         [mainNode removeYogaChild:node];
     } else if (([iden isEqualToString:@"eml.animated_subscribe_button"] || [iden isEqualToString:@"eml.compact_subscribe_button"]) && IS_ENABLED(RemoveShortsSubButton)) {
         view.hidden = YES;
-    } else if ([iden isEqualToString:@"eml.shorts-video-title-new"]) {
+    } else if ([iden isEqualToString:@"eml.shorts-video-title-new"] && IS_ENABLED(RemoveShortsVideoTitle)) {
         _ASDisplayView *title = view;
         for (int i=0; i<3; i++) title = (_ASDisplayView *)title.superview;
         ASDisplayNode *node = title.keepalive_node;
         title = (_ASDisplayView *)title.superview;
         [title.keepalive_node removeYogaChild:node];
-    } else if ([iden isEqualToString:@"eml.reel_channel_bar.channel_name"]) {
+    } else if ([iden isEqualToString:@"eml.reel_channel_bar.channel_name"] && IS_ENABLED(RemoveShortsChannelName)) {
         _ASDisplayView *bruh = view;
         for (int i=0; i<=1; i++) bruh = (_ASDisplayView *)bruh.superview;
         ASDisplayNode *node = bruh.keepalive_node;
         [node removeYogaChild:node.yogaChildren.lastObject];
-    } else if ([iden isEqualToString:@"decorated-avatar-id"]) {
+    } else if ([iden isEqualToString:@"decorated-avatar-id"] && IS_ENABLED(RemoveShortsChannelProfile)) {
         ASDisplayNode *node = ((_ASDisplayView *)view.superview).keepalive_node;
         [node removeYogaChild:node.yogaChildren.firstObject];
     } else {
@@ -208,12 +204,18 @@ void YouModFilterShortsDisplayView(_ASDisplayView *view, NSString *iden) {
     }
 }
 
+// bro, it's becoming lowkey tiktok
+%hook YTReelWatchRootView
+- (void)setBottomActionBarView:(UIView *)view {
+    if (IS_ENABLED(RemoveShortsCommentBar)) return;
+    %orig;
+}
+%end
+
 %hook YTAppDelegate
 - (void)sceneDidBecomeActive:(UIScene *)scene {
     %orig;
-    if ((isFullscreenEnabled && IS_ENABLED(FullScreenShorts)) || (isShortsOnlyOn && IS_ENABLED(ShortsOnly))) {
-        [[self valueForKey:@"_appViewController"] performSelector:@selector(hidePivotBar)];
-    }
+    if ((isFullscreenEnabled && IS_ENABLED(FullScreenShorts)) || (isShortsOnlyOn && IS_ENABLED(ShortsOnly))) [YouModAppViewController() performSelector:@selector(hidePivotBar)];
 }
 %end
 
@@ -229,12 +231,13 @@ void YouModFilterShortsDisplayView(_ASDisplayView *view, NSString *iden) {
     if (view != nil) {
         _ASDisplayView *check = view;
         while (view.subviews.count == 1) view = view.subviews[0];
-        if (view.subviews.count > 1 && view != check) YouModRemoveShortsOverlayButton(view.subviews[1]);
+        if (view.subviews.count > 1 && view != check && [view isKindOfClass:%c(_ASDisplayView)]) YouModRemoveShortsOverlayButton(view.subviews[1]);
     } else {
         view = [self valueForKey:@"_actionBarComponentView"];
+        if (view == nil) return;
         _ASDisplayView *check = view;
         while (view.subviews.count == 1) view = view.subviews[0];
-        if (view != check) YouModRemoveShortsOverlayButton(view);
+        if (view != check && view.subviews.count > 1 && [view isKindOfClass:%c(_ASDisplayView)]) YouModRemoveShortsOverlayButton(view);
     }
 }
 %end
@@ -247,7 +250,36 @@ void YouModFilterShortsDisplayView(_ASDisplayView *view, NSString *iden) {
     _ASDisplayView *view = [self valueForKey:@"_overlayView"];
     _ASDisplayView *check = view;
     while (view.subviews.count == 1) view = view.subviews[0];
-    if (view.subviews.count > 1 && view != check) YouModRemoveShortsOverlayButton(view.subviews[1]);
+    if (view.subviews.count > 1 && view != check && [view isKindOfClass:%c(_ASDisplayView)]) YouModRemoveShortsOverlayButton(view.subviews[1]);
+}
+%end
+
+%hook YTPlayerView
+- (void)didPinch:(UIPinchGestureRecognizer *)gesture {
+    %orig;
+    BOOL isNotOk = isShortsOnlyOn && IS_ENABLED(ShortsOnly);
+    if (IS_ENABLED(FullScreenShorts) && !isNotOk) {
+        UIViewController *vc = self._viewControllerForAncestor.parentViewController;
+        if ([vc isKindOfClass:%c(YTShortsPlayerViewController)]
+            || [vc isKindOfClass:%c(YTReelContainerViewController)]) {
+            UIView *mainView = vc.view;
+            @try {
+                mainView = [mainView valueForKey:@"_overlayView"];
+            } @catch (id ex) {
+                mainView = [mainView valueForKey:@"_playbackOverlay"];
+            }
+            UIViewController *appVC = YouModAppViewController();
+            if (gesture.scale > 1) {
+                isFullscreenEnabled = YES;
+                [appVC performSelector:@selector(hidePivotBar)];
+                [UIView animateWithDuration:0.3 animations:^{ mainView.alpha = 0; }];
+            } else {
+                isFullscreenEnabled = NO;
+                [appVC performSelector:@selector(showPivotBar)];
+                [UIView animateWithDuration:0.3 animations:^{ mainView.alpha = 1; }];
+            }
+        }
+    }
 }
 %end
 
@@ -260,21 +292,14 @@ void YouModFilterShortsDisplayView(_ASDisplayView *view, NSString *iden) {
 
 %hook YTReelContentView
 %property (nonatomic, retain) UILongPressGestureRecognizer *YouModExitShortsOnlyGesture;
-%property (nonatomic, retain) UIPinchGestureRecognizer *YouModPinchGesture;
-- (void)setUpGestureRecognizers {
+- (void)didMoveToWindow {
     %orig;
     self.playbackOverlay.alpha = !isFullscreenEnabled;
-    if (IS_ENABLED(ShortsOnly) && isShortsOnlyOn) {
+    if (IS_ENABLED(ShortsOnly) && isShortsOnlyOn && !self.YouModExitShortsOnlyGesture) {
         self.YouModExitShortsOnlyGesture = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(YouModTurnOffShortsOnly:)];
         self.YouModExitShortsOnlyGesture.numberOfTouchesRequired = 2;
         self.YouModExitShortsOnlyGesture.minimumPressDuration = 0.5;
-        self.YouModExitShortsOnlyGesture.delegate = (id<UIGestureRecognizerDelegate>)self;
         [self addGestureRecognizer:self.YouModExitShortsOnlyGesture];
-    } else if (IS_ENABLED(FullScreenShorts) && !self.YouModPinchGesture) {
-        self.YouModPinchGesture = [[UIPinchGestureRecognizer alloc] initWithTarget:self action:@selector(YouModHandlePinch:)];
-        self.YouModPinchGesture.delegate = (id<UIGestureRecognizerDelegate>)self;
-        self.YouModPinchGesture.cancelsTouchesInView = NO;
-        [self addGestureRecognizer:self.YouModPinchGesture];
     }
 }
 %new
@@ -285,75 +310,21 @@ void YouModFilterShortsDisplayView(_ASDisplayView *view, NSString *iden) {
     self.YouModExitShortsOnlyGesture = nil;
     UIView *parent = sbGetNotificationParent();
     [YouModPillView showSuccessInView:parent message:LOC(@"SHORTS_ONLY_DISABLED") duration:3.0];
-    [[[[self valueForKey:@"_parentResponder"] valueForKey:@"_delegate"] valueForKey:@"_pivotBarProvider"] performSelector:@selector(showPivotBar)];
+    [YouModAppViewController() performSelector:@selector(showPivotBar)];
     [UIView animateWithDuration:0.3 animations:^{ self.playbackOverlay.alpha = 1; }];
-    if (IS_ENABLED(FullScreenShorts)) {
-        self.YouModPinchGesture = [[UIPinchGestureRecognizer alloc] initWithTarget:self action:@selector(YouModHandlePinch:)];
-        self.YouModPinchGesture.delegate = (id<UIGestureRecognizerDelegate>)self;
-        self.YouModPinchGesture.cancelsTouchesInView = NO;
-        [self addGestureRecognizer:self.YouModPinchGesture];
-    }
-}
-%new
-- (void)YouModHandlePinch:(UIPinchGestureRecognizer *)gesture {
-    if (!IS_ENABLED(FullScreenShorts) || (gesture.state != UIGestureRecognizerStateBegan && gesture.state != UIGestureRecognizerStateChanged)) return;
-
-    BOOL shouldEnableFullscreen;
-    if (gesture.scale >= 1.05) shouldEnableFullscreen = YES;
-    else if (gesture.scale <= 0.95) shouldEnableFullscreen = NO;
-    else return;
-
-    UIViewController *appVC = [[[UIApplication sharedApplication] delegate] window].rootViewController;
-    if (!appVC || ![appVC respondsToSelector:@selector(isPivotBarHidden)]) return;
-
-    BOOL isTabBarHidden = [appVC performSelector:@selector(isPivotBarHidden)];
-    BOOL fullscreenChanged = shouldEnableFullscreen != isFullscreenEnabled;
-    BOOL tabBarNeedsUpdate = shouldEnableFullscreen != isTabBarHidden;
-    if (!fullscreenChanged && !tabBarNeedsUpdate) return;
-
-    isFullscreenEnabled = shouldEnableFullscreen;
-    if (tabBarNeedsUpdate) {
-        if (shouldEnableFullscreen) [appVC performSelector:@selector(hidePivotBar)];
-        else [appVC performSelector:@selector(showPivotBar)];
-    }
-    if (fullscreenChanged) {
-        [UIView animateWithDuration:0.3 animations:^{ self.playbackOverlay.alpha = shouldEnableFullscreen ? 0 : 1; }];
-    }
-}
-%new
-- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldBeRequiredToFailByGestureRecognizer:(UIGestureRecognizer *)otherGestureRecognizer {
-    if ((gestureRecognizer == self.YouModExitShortsOnlyGesture && [otherGestureRecognizer isKindOfClass:[UILongPressGestureRecognizer class]])
-        || (gestureRecognizer == self.YouModPinchGesture && [otherGestureRecognizer isKindOfClass:[UIPinchGestureRecognizer class]])) {
-        return YES;
-    }
-    return NO;
-}
-%new
-- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)otherGestureRecognizer {
-    if (gestureRecognizer == self.YouModExitShortsOnlyGesture || gestureRecognizer == self.YouModPinchGesture) {
-        return NO;
-    }
-    return YES;
 }
 %end
 
 %hook YTReelContainerView
 %property (nonatomic, retain) UILongPressGestureRecognizer *YouModExitShortsOnlyGesture;
-%property (nonatomic, retain) UIPinchGestureRecognizer *YouModPinchGesture;
 - (void)didMoveToWindow {
     %orig;
     self.overlayView.alpha = !isFullscreenEnabled;
-    if (IS_ENABLED(ShortsOnly) && isShortsOnlyOn) {
+    if (IS_ENABLED(ShortsOnly) && isShortsOnlyOn && !self.YouModExitShortsOnlyGesture) {
         self.YouModExitShortsOnlyGesture = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(YouModTurnOffShortsOnly:)];
         self.YouModExitShortsOnlyGesture.numberOfTouchesRequired = 2;
         self.YouModExitShortsOnlyGesture.minimumPressDuration = 0.5;
-        self.YouModExitShortsOnlyGesture.delegate = (id<UIGestureRecognizerDelegate>)self;
         [self addGestureRecognizer:self.YouModExitShortsOnlyGesture];
-    } else if (IS_ENABLED(FullScreenShorts) && !self.YouModPinchGesture) {
-        self.YouModPinchGesture = [[UIPinchGestureRecognizer alloc] initWithTarget:self action:@selector(YouModHandlePinch:)];
-        self.YouModPinchGesture.delegate = (id<UIGestureRecognizerDelegate>)self;
-        self.YouModPinchGesture.cancelsTouchesInView = NO;
-        [self addGestureRecognizer:self.YouModPinchGesture];
     }
 }
 %new
@@ -364,53 +335,7 @@ void YouModFilterShortsDisplayView(_ASDisplayView *view, NSString *iden) {
     self.YouModExitShortsOnlyGesture = nil;
     UIView *parent = sbGetNotificationParent();
     [YouModPillView showSuccessInView:parent message:LOC(@"SHORTS_ONLY_DISABLED") duration:3.0];
-    [[[[self valueForKey:@"_parentResponder"] valueForKey:@"_delegate"] valueForKey:@"_pivotBarProvider"] performSelector:@selector(showPivotBar)];
+    [YouModAppViewController() performSelector:@selector(showPivotBar)];
     [UIView animateWithDuration:0.3 animations:^{ self.overlayView.alpha = 1; }];
-    if (IS_ENABLED(FullScreenShorts)) {
-        self.YouModPinchGesture = [[UIPinchGestureRecognizer alloc] initWithTarget:self action:@selector(YouModHandlePinch:)];
-        self.YouModPinchGesture.delegate = (id<UIGestureRecognizerDelegate>)self;
-        self.YouModPinchGesture.cancelsTouchesInView = NO;
-        [self addGestureRecognizer:self.YouModPinchGesture];
-    }
-}
-%new
-- (void)YouModHandlePinch:(UIPinchGestureRecognizer *)gesture {
-    if (!IS_ENABLED(FullScreenShorts) || (gesture.state != UIGestureRecognizerStateBegan && gesture.state != UIGestureRecognizerStateChanged)) return;
-
-    BOOL shouldEnableFullscreen;
-    if (gesture.scale >= 1.05) shouldEnableFullscreen = YES;
-    else if (gesture.scale <= 0.95) shouldEnableFullscreen = NO;
-    else return;
-
-    UIViewController *appVC = [[[UIApplication sharedApplication] delegate] window].rootViewController;
-
-    BOOL isTabBarHidden = [appVC performSelector:@selector(isPivotBarHidden)];
-    BOOL fullscreenChanged = shouldEnableFullscreen != isFullscreenEnabled;
-    BOOL tabBarNeedsUpdate = shouldEnableFullscreen != isTabBarHidden;
-    if (!fullscreenChanged && !tabBarNeedsUpdate) return;
-
-    isFullscreenEnabled = shouldEnableFullscreen;
-    if (tabBarNeedsUpdate) {
-        if (shouldEnableFullscreen) [appVC performSelector:@selector(hidePivotBar)];
-        else [appVC performSelector:@selector(showPivotBar)];
-    }
-    if (fullscreenChanged) {
-        [UIView animateWithDuration:0.3 animations:^{ self.overlayView.alpha = shouldEnableFullscreen ? 0 : 1; }];
-    }
-}
-%new
-- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldBeRequiredToFailByGestureRecognizer:(UIGestureRecognizer *)otherGestureRecognizer {
-    if ((gestureRecognizer == self.YouModExitShortsOnlyGesture && [otherGestureRecognizer isKindOfClass:[UILongPressGestureRecognizer class]])
-        || (gestureRecognizer == self.YouModPinchGesture && [otherGestureRecognizer isKindOfClass:[UIPinchGestureRecognizer class]])) {
-        return YES;
-    }
-    return NO;
-}
-%new
-- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)otherGestureRecognizer {
-    if (gestureRecognizer == self.YouModExitShortsOnlyGesture || gestureRecognizer == self.YouModPinchGesture) {
-        return NO;
-    }
-    return YES;
 }
 %end

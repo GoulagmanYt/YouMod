@@ -51,19 +51,6 @@
 - (BOOL)enableYouthereCommandsOnIos { return IS_ENABLED(HideAreYouThereDialog) ? NO : %orig; }
 %end
 
-%hook YTVersionUtils
-+ (NSString *)appVersionLong {
-    NSString *appVersion = %orig;
-    if ([appVersion compare:@"20.21.6" options:NSNumericSearch] == NSOrderedAscending) return @"20.21.6";
-    return appVersion;
-}
-+ (NSString *)appVersion {
-    NSString *appVersion = %orig;
-    if ([appVersion compare:@"20.21.6" options:NSNumericSearch] == NSOrderedAscending) return @"20.21.6";
-    return appVersion;
-}
-%end
-
 %hook YTReelModel
 - (BOOL)isPiPSupported { return IS_ENABLED(DisablesShortsPiP) ? NO : %orig; }
 %end
@@ -206,7 +193,7 @@
 %end
 
 %hook UIKeyboardImpl
-+ (BOOL)isFloating { return IS_ENABLED(FloatingKeyboard) && isPad() ? YES : %orig; }
++ (BOOL)isFloating { return IS_ENABLED(FloatingKeyboard) && [YMHelpers isPad] ? YES : %orig; }
 %end
 
 %hook YTEngagementPanelHeaderView
