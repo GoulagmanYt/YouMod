@@ -1,0 +1,118 @@
+name: Publish SideStore source
+
+# Quand "Build IPA with tweaks" réussit : publie la release (ipa.yml la crée en brouillon)
+# puis régénère source.json sur la branche "sidestore".
+# URL de la source :
+#   https://raw.githubusercontent.com/<ton-user>/YouMod/sidestore/source.json
+
+on:
+  workflow_run:
+    workflows: ["Build IPA with tweaks"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag de la release à publier (ex : youmod-ipa42)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-source
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ inputs.tag || format('youmod-ipa{0}', github.event.workflow_run.run_number) }}
+    steps:
+      - name: Publish the draft release
+        run: |
+          set -euo pipefail
+          ID=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+                 --jq ".[] | select(.tag_name==\"$TAG\") | .id" | head -n1)
+          test -n "$ID" || { echo "::error::Release $TAG introuvable"; exit 1; }
+          gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$ID" \
+            -F draft=false -f make_latest=true > release.json
+
+      - name: Prepare sidestore branch
+        run: |
+          set -euo pipefail
+          REMOTE="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if ! git clone --quiet --depth=1 --branch sidestore "$REMOTE" out 2>/dev/null; then
+            mkdir out
+            git -C out init --quiet -b sidestore
+            git -C out remote add origin "$REMOTE"
+          fi
+
+      - name: Generate source.json
+        run: |
+          python3 - <<'PY'
+          import json, os, re
+          from urllib.parse import quote
+
+          repo = os.environ["GITHUB_REPOSITORY"]
+          owner = repo.split("/")[0]
+          rel = json.load(open("release.json"))
+
+          asset = next(a for a in rel["assets"] if a["name"].endswith(".ipa"))
+          m = re.match(r"YouMod_(?P<yt>\S+?)_v(?P<ym>\S+)\s+\((?P<run>\d+)\)\s*$", rel.get("name") or "")
+          if m:
+              yt, ym, run = m["yt"], m["ym"], m["run"]
+          else:
+              yt, ym, run = "0", "0", str(rel["id"])
+
+          # YouTube + n° de build : change à chaque build, donc SideStore propose la mise à jour
+          version = f"{yt}.{run}"
+          url = f"https://github.com/{repo}/releases/download/{quote(rel['tag_name'])}/{quote(asset['name'])}"
+          date = rel["published_at"][:10]
+          desc = f"YouTube {yt} + YouMod {ym}"
+
+          app = {
+              "name": "YouTube (YouMod)",
+              "bundleIdentifier": "com.google.ios.youtube",
+              "developerName": owner,
+              "subtitle": "YouTube + YouMod",
+              "localizedDescription": desc,
+              "iconURL": f"https://raw.githubusercontent.com/{repo}/HEAD/Icon.png",
+              # champs "v1" (anciens clients)...
+              "version": version,
+              "versionDate": date,
+              "downloadURL": url,
+              "size": asset["size"],
+              # ... et format "v2"
+              "versions": [{
+                  "version": version,
+                  "date": date,
+                  "localizedDescription": desc,
+                  "downloadURL": url,
+                  "size": asset["size"],
+                  "minOSVersion": "14.0",
+              }],
+          }
+          source = {
+              "name": "YouMod",
+              "identifier": f"io.github.{owner.lower()}.youmod",
+              "subtitle": "Builds automatiques de YouMod",
+              "apps": [app],
+              "news": [],
+          }
+          with open("out/source.json", "w") as f:
+              json.dump(source, f, indent=2, ensure_ascii=False)
+          print(json.dumps(source, indent=2, ensure_ascii=False))
+          PY
+
+      - name: Push source.json
+        working-directory: out
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add source.json
+          git diff --cached --quiet || git commit --quiet -m "Update source ($TAG)"
+          git push origin HEAD:sidestore
+          echo "Source : https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/sidestore/source.json" >> "$GITHUB_STEP_SUMMARY"

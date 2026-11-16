@@ -1,0 +1,70 @@
+name: Auto sync upstream and build
+
+# Fusionne les nouveaux commits de l'upstream dans ta branche, puis lance
+# "Build IPA with tweaks" (ipa.yml) si quelque chose a changé.
+# Pour suivre la branche de dev de l'upstream : BRANCH: pre-release
+# (cette branche doit aussi être la branche PAR DÉFAUT du dépôt, sinon le cron ne tourne pas).
+
+on:
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      force_build:
+        description: "Rebuild même sans nouveau commit (ex : nouvelle IPA YouTube de base)"
+        type: boolean
+        default: false
+
+env:
+  UPSTREAM: Tonwalter888/YouMod
+  BRANCH: main
+
+concurrency:
+  group: auto-sync-build
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Merge upstream and trigger build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.BRANCH }}
+          fetch-depth: 0
+          # PAT obligatoire : le GITHUB_TOKEN ne peut pas pousser des fichiers .github/workflows/*
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Merge upstream
+        id: merge
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream "https://github.com/${UPSTREAM}.git"
+          git fetch --quiet upstream "${BRANCH}"
+
+          NEW=$(git rev-list --count "HEAD..upstream/${BRANCH}")
+          echo "Nouveaux commits upstream : $NEW"
+          echo "new_commits=$NEW" >> "$GITHUB_OUTPUT"
+
+          if [ "$NEW" -gt 0 ]; then
+            if ! git merge --no-edit "upstream/${BRANCH}"; then
+              git merge --abort
+              echo "::error::Conflit de merge avec upstream/${BRANCH} : à résoudre à la main."
+              exit 1
+            fi
+            git push origin "HEAD:${BRANCH}"
+          fi
+
+      - name: Trigger IPA build
+        if: ${{ steps.merge.outputs.new_commits != '0' || inputs.force_build }}
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          IPA_URL: ${{ secrets.IPA_URL }}
+        run: |
+          test -n "$IPA_URL" || { echo "::error::Secret IPA_URL manquant"; exit 1; }
+          gh workflow run ipa.yml --ref "$BRANCH" \
+            -f repo="$GITHUB_REPOSITORY" \
+            -f branch="$BRANCH" \
+            -f ipa_url="$IPA_URL"
