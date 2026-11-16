@@ -2,8 +2,7 @@ name: Auto sync upstream and build
 
 # Fusionne les nouveaux commits de l'upstream dans ta branche, puis lance
 # "Build IPA with tweaks" (ipa.yml) si quelque chose a changé.
-# Pour suivre la branche de dev de l'upstream : BRANCH: pre-release
-# (cette branche doit aussi être la branche PAR DÉFAUT du dépôt, sinon le cron ne tourne pas).
+# Branche suivie : pre-release (doit rester la branche PAR DÉFAUT du dépôt, sinon le cron ne tourne pas).
 
 on:
   schedule:
@@ -17,7 +16,7 @@ on:
 
 env:
   UPSTREAM: Tonwalter888/YouMod
-  BRANCH: main
+  BRANCH: pre-release
 
 concurrency:
   group: auto-sync-build
@@ -61,10 +60,12 @@ jobs:
         if: ${{ steps.merge.outputs.new_commits != '0' || inputs.force_build }}
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
+          # Sans ça, gh choisit le remote "upstream" (Tonwalter888/YouMod) -> erreur 403
+          GH_REPO: ${{ github.repository }}
           IPA_URL: ${{ secrets.IPA_URL }}
         run: |
           test -n "$IPA_URL" || { echo "::error::Secret IPA_URL manquant"; exit 1; }
-          gh workflow run ipa.yml --ref "$BRANCH" \
+          gh workflow run ipa.yml --repo "$GITHUB_REPOSITORY" --ref "$BRANCH" \
             -f repo="$GITHUB_REPOSITORY" \
             -f branch="$BRANCH" \
             -f ipa_url="$IPA_URL"
