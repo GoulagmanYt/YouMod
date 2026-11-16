@@ -1,8 +1,8 @@
 name: Auto sync upstream and build
 
-# Fusionne les nouveaux commits de l'upstream dans ta branche, puis lance
-# "Build IPA with tweaks" (ipa.yml) si quelque chose a changé.
-# Branche suivie : pre-release (doit rester la branche PAR DÉFAUT du dépôt, sinon le cron ne tourne pas).
+# Merges new upstream commits into your branch, then triggers
+# "Build IPA with tweaks" (ipa.yml) if anything changed.
+# Tracked branch: pre-release (it must stay the repository's DEFAULT branch, otherwise the cron does not run).
 
 on:
   schedule:
@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       force_build:
-        description: "Rebuild même sans nouveau commit (ex : nouvelle IPA YouTube de base)"
+        description: "Rebuild even without new commits (e.g. a new base YouTube IPA)"
         type: boolean
         default: false
 
@@ -32,7 +32,7 @@ jobs:
         with:
           ref: ${{ env.BRANCH }}
           fetch-depth: 0
-          # PAT obligatoire : le GITHUB_TOKEN ne peut pas pousser des fichiers .github/workflows/*
+          # PAT required: GITHUB_TOKEN cannot push .github/workflows/* files
           token: ${{ secrets.GH_PAT }}
 
       - name: Merge upstream
@@ -44,13 +44,13 @@ jobs:
           git fetch --quiet upstream "${BRANCH}"
 
           NEW=$(git rev-list --count "HEAD..upstream/${BRANCH}")
-          echo "Nouveaux commits upstream : $NEW"
+          echo "New upstream commits: $NEW"
           echo "new_commits=$NEW" >> "$GITHUB_OUTPUT"
 
           if [ "$NEW" -gt 0 ]; then
             if ! git merge --no-edit "upstream/${BRANCH}"; then
               git merge --abort
-              echo "::error::Conflit de merge avec upstream/${BRANCH} : à résoudre à la main."
+              echo "::error::Merge conflict with upstream/${BRANCH}: resolve it manually."
               exit 1
             fi
             git push origin "HEAD:${BRANCH}"
@@ -60,11 +60,11 @@ jobs:
         if: ${{ steps.merge.outputs.new_commits != '0' || inputs.force_build }}
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
-          # Sans ça, gh choisit le remote "upstream" (Tonwalter888/YouMod) -> erreur 403
+          # Without this, gh picks the "upstream" remote (Tonwalter888/YouMod) -> 403 error
           GH_REPO: ${{ github.repository }}
           IPA_URL: ${{ secrets.IPA_URL }}
         run: |
-          test -n "$IPA_URL" || { echo "::error::Secret IPA_URL manquant"; exit 1; }
+          test -n "$IPA_URL" || { echo "::error::Missing IPA_URL secret"; exit 1; }
           gh workflow run ipa.yml --repo "$GITHUB_REPOSITORY" --ref "$BRANCH" \
             -f repo="$GITHUB_REPOSITORY" \
             -f branch="$BRANCH" \

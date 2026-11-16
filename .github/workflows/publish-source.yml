@@ -1,9 +1,9 @@
 name: Publish SideStore source
 
-# Quand "Build IPA with tweaks" réussit : publie la release (ipa.yml la crée en brouillon)
-# puis régénère source.json sur la branche "sidestore".
-# URL de la source :
-#   https://raw.githubusercontent.com/<ton-user>/YouMod/sidestore/source.json
+# When "Build IPA with tweaks" succeeds: publishes the release (ipa.yml creates it as a draft)
+# then regenerates source.json on the "sidestore" branch.
+# Source URL:
+#   https://raw.githubusercontent.com/<your-user>/YouMod/sidestore/source.json
 
 on:
   workflow_run:
@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag de la release à publier (ex : youmod-ipa42)"
+        description: "Release tag to publish (e.g. youmod-ipa42)"
         required: true
         type: string
 
@@ -36,7 +36,7 @@ jobs:
           set -euo pipefail
           ID=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
                  --jq ".[] | select(.tag_name==\"$TAG\") | .id" | head -n1)
-          test -n "$ID" || { echo "::error::Release $TAG introuvable"; exit 1; }
+          test -n "$ID" || { echo "::error::Release $TAG not found"; exit 1; }
           gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$ID" \
             -F draft=false -f make_latest=true > release.json
 
@@ -67,8 +67,9 @@ jobs:
           else:
               yt, ym, run = "0", "0", str(rel["id"])
 
-          # YouTube + n° de build : change à chaque build, donc SideStore propose la mise à jour
-          version = f"{yt}.{run}"
+          # SideStore compares this value with the version read from the IPA (CFBundleShortVersionString),
+          # they must be strictly identical: so we use the YouTube version alone.
+          version = yt
           url = f"https://github.com/{repo}/releases/download/{quote(rel['tag_name'])}/{quote(asset['name'])}"
           date = rel["published_at"][:10]
           desc = f"YouTube {yt} + YouMod {ym}"
@@ -80,12 +81,12 @@ jobs:
               "subtitle": "YouTube + YouMod",
               "localizedDescription": desc,
               "iconURL": f"https://raw.githubusercontent.com/{repo}/HEAD/Icon.png",
-              # champs "v1" (anciens clients)...
+              # "v1" fields (older clients)...
               "version": version,
               "versionDate": date,
               "downloadURL": url,
               "size": asset["size"],
-              # ... et format "v2"
+              # ... and "v2" format
               "versions": [{
                   "version": version,
                   "date": date,
@@ -98,7 +99,7 @@ jobs:
           source = {
               "name": "YouMod",
               "identifier": f"io.github.{owner.lower()}.youmod",
-              "subtitle": "Builds automatiques de YouMod",
+              "subtitle": "Automatic YouMod builds",
               "apps": [app],
               "news": [],
           }
@@ -115,4 +116,4 @@ jobs:
           git add source.json
           git diff --cached --quiet || git commit --quiet -m "Update source ($TAG)"
           git push origin HEAD:sidestore
-          echo "Source : https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/sidestore/source.json" >> "$GITHUB_STEP_SUMMARY"
+          echo "Source: https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/sidestore/source.json" >> "$GITHUB_STEP_SUMMARY"
