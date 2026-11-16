@@ -1,7 +1,7 @@
 {
   "name": "YouMod",
   "identifier": "io.github.goulagmanyt.youmod",
-  "subtitle": "Builds automatiques de YouMod",
+  "subtitle": "Automatic YouMod builds",
   "apps": [
     {
       "name": "YouTube (YouMod)",
@@ -10,17 +10,17 @@
       "subtitle": "YouTube + YouMod",
       "localizedDescription": "YouTube 21.46.3 + YouMod 2.1.0",
       "iconURL": "https://raw.githubusercontent.com/GoulagmanYt/YouMod/HEAD/Icon.png",
-      "version": "21.46.3.8",
+      "version": "21.46.3",
       "versionDate": "2026-11-16",
-      "downloadURL": "https://github.com/GoulagmanYt/YouMod/releases/download/youmod-ipa8/YouMod_21.46.3_v2.1.0.ipa",
-      "size": 158452148,
+      "downloadURL": "https://github.com/GoulagmanYt/YouMod/releases/download/youmod-ipa9/YouMod_21.46.3_v2.1.0.ipa",
+      "size": 158452160,
       "versions": [
         {
-          "version": "21.46.3.8",
+          "version": "21.46.3",
           "date": "2026-11-16",
           "localizedDescription": "YouTube 21.46.3 + YouMod 2.1.0",
-          "downloadURL": "https://github.com/GoulagmanYt/YouMod/releases/download/youmod-ipa8/YouMod_21.46.3_v2.1.0.ipa",
-          "size": 158452148,
+          "downloadURL": "https://github.com/GoulagmanYt/YouMod/releases/download/youmod-ipa9/YouMod_21.46.3_v2.1.0.ipa",
+          "size": 158452160,
           "minOSVersion": "14.0"
         }
       ]
