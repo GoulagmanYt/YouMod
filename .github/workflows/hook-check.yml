@@ -144,6 +144,9 @@ jobs:
               return classes, selectors, scanned
 
 
+          # Hooks on Apple framework classes (UIKit, Foundation, ...) cannot be found in the app binary
+          SYSTEM_RE = re.compile(r'^(NS|UI|AV|MP|CA|CF|CG|CL|CM|WK|PH|SK|OS|LA|MK|CN|CK|EK|QL|SF)[A-Z_]')
+
           OPEN_RE = re.compile(r'^\s*%(hook|group|subclass)\s+(\w+)')
           HOOK_RE = re.compile(r'^\s*%hook\s+(\w+)')
           GROUP_RE = re.compile(r'^\s*%group\s+(\w+)')
@@ -245,9 +248,11 @@ jobs:
               hooks = parse_hooks(args.source_dir)
               os.makedirs(args.out_dir, exist_ok=True)
 
-              dead_classes, dead_selectors = {}, []
+              dead_classes, dead_selectors, system_classes = {}, [], set()
               for file, line, group, cls, sel in hooks:
-                  if cls not in classes:
+                  if cls not in classes and SYSTEM_RE.match(cls):
+                      system_classes.add(cls)
+                  elif cls not in classes:
                       dead_classes.setdefault((cls, file, group), []).append((line, sel))
                   elif sel not in selectors:
                       dead_selectors.append((file, line, group, cls, sel))
@@ -267,7 +272,8 @@ jobs:
                   f'- Mach-O files scanned: {len(scanned)}',
                   f'- Classes in the app: {len(classes)}, selectors: {len(selectors)}',
                   f'- Hooked methods in the source: {len(hooks)} on {len(hooked_classes)} classes',
-                  f'- **Dead classes: {len({k[0] for k in dead_classes})}**, **dead selectors: {len(dead_selectors)}**', '',
+                  f'- **Dead classes: {len({k[0] for k in dead_classes})}**, **dead selectors: {len(dead_selectors)}**',
+                  f'- Apple framework classes hooked (not checked): {len(system_classes)}', '',
                   'A dead class is in no Mach-O of the app. A dead selector is in none either, but it may be inherited '
                   'from a system framework. Hooks inside a `%group` are often gated on purpose (older versions only).', '',
               ]
