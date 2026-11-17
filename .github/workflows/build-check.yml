@@ -1,0 +1,203 @@
+name: Build check
+
+# Fast checks for every push outside main (no IPA needed):
+#  1. static:  workflow files (YAML, bash, embedded Python), Logos %hook/%end structure, localization keys
+#  2. compile: builds the YouMod tweak with Theos like the "Build YouMod" step of ipa.yml does, but only
+#              compiles it (no packaging: no FFmpeg download, no release, nothing is published)
+
+on:
+  push:
+    branches-ignore: [ "main" ]
+    paths-ignore: [ "**/*.md" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  static:
+    name: Static checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install PyYAML
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install --quiet pyyaml
+
+      - name: Run the static checks
+        run: |
+          mkdir -p .ci
+          cat > .ci/staticcheck.py <<'PY'
+          #!/usr/bin/env python3
+          """Static checks that need no toolchain: workflow files, Logos block structure, localization keys."""
+          import glob
+          import os
+          import py_compile
+          import re
+          import subprocess
+          import sys
+          import tempfile
+          import textwrap
+
+          import yaml
+
+          errors, warnings = [], []
+
+
+          def read(path):
+              with open(path, encoding='utf-8', errors='replace') as f:
+                  return f.read().replace('\r\n', '\n')
+
+
+          # 1. Workflow files: YAML, bash syntax of every run step, Python embedded in heredocs
+          for path in sorted(glob.glob('.github/workflows/*.y*ml')):
+              try:
+                  doc = yaml.safe_load(read(path))
+              except yaml.YAMLError as exc:
+                  errors.append(f'{path}: invalid YAML: {exc}')
+                  continue
+              for job_name, job in ((doc or {}).get('jobs') or {}).items():
+                  for i, step in enumerate(job.get('steps') or []):
+                      run = step.get('run')
+                      if not run:
+                          continue
+                      label = f"{path} job '{job_name}' step {i} ({step.get('name', 'unnamed')})"
+                      res = subprocess.run(['bash', '-n'], input=run, text=True, capture_output=True)
+                      if res.returncode:
+                          errors.append(f'{label}: bash syntax error: {res.stderr.strip()[:200]}')
+                      for m in re.finditer(r"<<-?\s*'?(PY\w*)'?\n(.*?)\n\s*\1\s*(?:\n|$)", run, re.S):
+                          with tempfile.NamedTemporaryFile('w', suffix='.py', delete=False) as tmp:
+                              tmp.write(textwrap.dedent(m.group(2)) + '\n')
+                          try:
+                              py_compile.compile(tmp.name, doraise=True)
+                          except py_compile.PyCompileError as exc:
+                              errors.append(f'{label}: embedded Python error: {exc.msg.strip()[:200]}')
+
+          # 2. Logos: every %hook / %group / %subclass needs its own %end
+          for path in sorted(glob.glob('Files/**/*.x', recursive=True)):
+              opened = ended = 0
+              for line in read(path).split('\n'):
+                  if re.match(r'\s*%(hook|group|subclass)\b', line):
+                      opened += 1
+                  elif re.match(r'\s*%end\b', line):
+                      ended += 1
+              if opened != ended:
+                  errors.append(f'{path}: {opened} %hook/%group/%subclass but {ended} %end')
+
+          # 3. Localization: keys used in code must exist in en, other languages should match en
+          base = glob.glob('layout/Library/Application Support/*.bundle')
+          if base:
+              lproj = os.path.join(base[0], '')
+              key_re = re.compile(r'^\s*"((?:[^"\\]|\\.)+)"\s*=', re.M)
+              langs = {}
+              for strings in glob.glob(os.path.join(lproj, '*.lproj', 'Localizable.strings')):
+                  langs[os.path.basename(os.path.dirname(strings))[:-6]] = set(key_re.findall(read(strings)))
+              if 'en' in langs:
+                  used = set()
+                  for path in glob.glob('Files/**/*.[xh]', recursive=True):
+                      used |= set(re.findall(r'\b(?:LOC|YMLOC)\(@"([A-Za-z0-9_]+)"\)', read(path)))
+                  for key in sorted(used - langs['en']):
+                      warnings.append(f'localization: key {key} is used in the code but missing in en.lproj')
+                  for lang, keys in sorted(langs.items()):
+                      if lang == 'en':
+                          continue
+                      missing = langs['en'] - keys
+                      extra = keys - langs['en']
+                      if missing:
+                          warnings.append(f'localization: {lang}.lproj lacks {len(missing)} key(s) present in en (e.g. {sorted(missing)[0]})')
+                      if extra:
+                          warnings.append(f'localization: {lang}.lproj has {len(extra)} key(s) not in en (e.g. {sorted(extra)[0]})')
+
+          for w in warnings:
+              print(f'::warning::{w}')
+          for e in errors:
+              print(f'::error::{e}')
+          summary = os.environ.get('GITHUB_STEP_SUMMARY')
+          if summary:
+              with open(summary, 'a') as f:
+                  f.write(f'### Static checks\n\n- Errors: {len(errors)}\n- Warnings: {len(warnings)}\n\n')
+                  for line in errors + warnings:
+                      f.write(f'- {line}\n')
+          print(f'{len(errors)} error(s), {len(warnings)} warning(s)')
+          sys.exit(1 if errors else 0)
+          PY
+          .venv/bin/python .ci/staticcheck.py
+
+  compile:
+    name: Compile the tweak
+    needs: static
+    runs-on: macos-latest
+    steps:
+      - name: Checkout YouMod
+        uses: actions/checkout@v7
+        with:
+          path: YouMod
+
+      - name: Install dependencies
+        run: brew install make ldid gnu-sed autoconf automake libtool pkg-config
+
+      - name: Set PATH environment variables
+        run: |
+          echo "$(brew --prefix make)/libexec/gnubin" >> $GITHUB_PATH
+          echo "THEOS=${{ github.workspace }}/theos" >> $GITHUB_ENV
+
+      - name: Get Theos commit
+        run: |
+          get_commit_hash() {
+            local repo_url=$1
+            git ls-remote "$repo_url" HEAD | awk '{print substr($1,1,7)}'
+          }
+          echo "THEOS_COMMIT=$(get_commit_hash "https://github.com/roothide/theos")" >> $GITHUB_ENV
+
+      - name: Cache Theos
+        id: cache-theos
+        uses: actions/cache@v6
+        with:
+          path: theos
+          key: 26.5-SDK-${{ env.THEOS_COMMIT }}
+
+      - name: Setup Theos
+        if: ${{ steps.cache-theos.outputs.cache-hit != 'true' }}
+        run: |
+          git clone --quiet --depth=1 --recurse-submodules https://github.com/roothide/theos.git
+          git clone --quiet --depth=1 -n --filter=tree:0 https://github.com/Tonwalter888/iOS-SDKs.git
+          cd iOS-SDKs
+          git sparse-checkout set --no-cone iPhoneOS26.5.sdk
+          git checkout --quiet
+          mv *.sdk "$THEOS/sdks"
+          cd ${{ github.workspace }}/theos/vendor/logos
+          git checkout a623700
+
+      - name: Clone headers
+        run: |
+          if [ ! -d "$THEOS/include/YouTubeHeader" ]; then
+            git clone --quiet --depth=1 https://github.com/PoomSmart/YouTubeHeader.git "$THEOS/include/YouTubeHeader"
+          else
+            cd "$THEOS/include/YouTubeHeader"
+            git pull --quiet --force
+            cd ${{ github.workspace }}
+          fi
+
+          if [ ! -d "$THEOS/include/PSHeader" ]; then
+            git clone --quiet --depth=1 https://github.com/PoomSmart/PSHeader.git "$THEOS/include/PSHeader"
+          else
+            cd "$THEOS/include/PSHeader"
+            git pull --quiet --force
+            cd ${{ github.workspace }}
+          fi
+
+      - name: Fix Theos od broken pipe issue
+        run: sed -i '' 's/od -c "$i" | head/od -c "$i" 2>\/dev\/null | head/g' $THEOS/bin/convert_xml_plist.sh || true
+
+      - name: Compile YouMod
+        run: |
+          cd YouMod
+          make DEBUG=0 FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
+          find .theos/obj -name 'YouMod.dylib' | grep .

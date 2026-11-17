@@ -1,0 +1,314 @@
+name: Hook check
+
+# Compares the %hook classes and methods of Files/*.x with the Objective-C classes and selectors that
+# really exist in a decrypted YouTube IPA, to find hooks that no longer exist in that YouTube version.
+# - The IPA comes from the IPA_URL repository secret (not from an input, so the link stays masked).
+# - Only class and selector NAMES are written to the artifact; the IPA itself is never uploaded.
+# - Run it with the branch you want to check selected in "Use workflow from".
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch, tag or commit of the sources to check (empty = the branch selected above)"
+        required: false
+        default: ''
+      keywords:
+        description: "Regex (case-insensitive): matching class and selector names are listed in matches.txt"
+        required: false
+        default: 'mute|watermark|annotation|mdx|cast|pivot|reel|shorts|playbackrate|speed'
+      fail_on_dead:
+        description: "Fail the run when a hooked class or selector is missing"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hook-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  hook-check:
+    name: Check hooks against the IPA
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout YouMod
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          path: YouMod
+
+      - name: Download the IPA
+        env:
+          IPA_URL: ${{ secrets.IPA_URL }}
+        run: |
+          set -euo pipefail
+          test -n "$IPA_URL" || { echo "::error::Missing IPA_URL secret"; exit 1; }
+          echo "::add-mask::$IPA_URL"
+          curl --fail --silent --show-error --location --retry 3 "$IPA_URL" -o youtube.ipa
+          unzip -tq youtube.ipa > /dev/null || { echo "::error::The downloaded file is not a valid IPA"; exit 1; }
+          # Exit code 11 only means that one of the patterns matched nothing
+          unzip -q youtube.ipa 'Payload/*.app/YouTube' 'Payload/*.app/Frameworks/*' 'Payload/*.app/Info.plist' -d ipa || [ $? -eq 11 ]
+          ls ipa/Payload
+
+      - name: Check the hooks
+        env:
+          KEYWORDS: ${{ inputs.keywords }}
+          FAIL_ON_DEAD: ${{ inputs.fail_on_dead }}
+        run: |
+          mkdir -p .ci
+          cat > .ci/hookcheck.py <<'PY'
+          #!/usr/bin/env python3
+          """Check the Logos hooks of a tweak against the classes/selectors of a decrypted app.
+
+          usage: hookcheck.py <app_dir> <source_dir> <out_dir> [--keywords REGEX] [--fail-on-dead]
+
+          Reads the __objc_classname and __objc_methname C-string sections of every arm64 Mach-O found in
+          <app_dir> (main executable, Frameworks, dylibs). A hooked class that is in none of them is dead for
+          sure. A hooked selector that is in none of them is very likely dead (it could still be inherited
+          from a system framework). Writes classes.txt, selectors.txt, matches.txt and hook-report.md.
+          """
+          import argparse
+          import glob
+          import os
+          import plistlib
+          import re
+          import struct
+          import sys
+
+          ARM64 = 0x0100000C
+          SECTIONS = ('__objc_classname', '__objc_methname')
+
+
+          def macho_arm64(data):
+              """Return the thin arm64 Mach-O inside data (thin or FAT), or None."""
+              if len(data) < 32:
+                  return None
+              be = struct.unpack_from('>I', data, 0)[0]
+              if be in (0xCAFEBABE, 0xCAFEBABF):
+                  wide = be == 0xCAFEBABF
+                  count = struct.unpack_from('>I', data, 4)[0]
+                  for i in range(count):
+                      if wide:
+                          cpu, _, off, size, _, _ = struct.unpack_from('>iiQQII', data, 8 + i * 32)
+                      else:
+                          cpu, _, off, size, _ = struct.unpack_from('>iiIII', data, 8 + i * 20)
+                      if cpu == ARM64:
+                          return data[off:off + size]
+                  return None
+              if struct.unpack_from('<I', data, 0)[0] == 0xFEEDFACF:
+                  return data
+              return None
+
+
+          def objc_strings(macho):
+              """Return {section: [strings]} for the Objective-C name sections of a thin 64-bit Mach-O."""
+              out = {name: [] for name in SECTIONS}
+              ncmds = struct.unpack_from('<I', macho, 16)[0]
+              off = 32
+              for _ in range(ncmds):
+                  cmd, size = struct.unpack_from('<II', macho, off)
+                  if cmd == 0x19:  # LC_SEGMENT_64
+                      nsects = struct.unpack_from('<I', macho, off + 64)[0]
+                      for j in range(nsects):
+                          s = off + 72 + j * 80
+                          name = macho[s:s + 16].split(b'\0', 1)[0].decode('ascii', 'replace')
+                          if name in out:
+                              length = struct.unpack_from('<Q', macho, s + 40)[0]
+                              start = struct.unpack_from('<I', macho, s + 48)[0]
+                              blob = macho[start:start + length]
+                              out[name].extend(x.decode('utf-8', 'replace') for x in blob.split(b'\0') if x)
+                  off += size
+              return out
+
+
+          def scan_app(app_dir):
+              classes, selectors, scanned = set(), set(), []
+              for path in glob.glob(os.path.join(app_dir, '**', '*'), recursive=True):
+                  if not os.path.isfile(path) or os.path.islink(path):
+                      continue
+                  with open(path, 'rb') as f:
+                      head = f.read(4)
+                  if head not in (b'\xcf\xfa\xed\xfe', b'\xca\xfe\xba\xbe', b'\xca\xfe\xba\xbf'):
+                      continue
+                  with open(path, 'rb') as f:
+                      macho = macho_arm64(f.read())
+                  if macho is None:
+                      continue
+                  found = objc_strings(macho)
+                  classes.update(found['__objc_classname'])
+                  selectors.update(found['__objc_methname'])
+                  scanned.append(os.path.relpath(path, app_dir))
+              return classes, selectors, scanned
+
+
+          OPEN_RE = re.compile(r'^\s*%(hook|group|subclass)\s+(\w+)')
+          HOOK_RE = re.compile(r'^\s*%hook\s+(\w+)')
+          GROUP_RE = re.compile(r'^\s*%group\s+(\w+)')
+
+
+          def strip_parens(text):
+              out, depth = [], 0
+              for ch in text:
+                  if ch == '(':
+                      depth += 1
+                  elif ch == ')':
+                      depth = max(0, depth - 1)
+                  elif depth == 0:
+                      out.append(ch)
+              return ''.join(out)
+
+
+          def selector_of(signature):
+              """'- (void)foo:(id)a bar:(int)b' -> 'foo:bar:' ; '- (BOOL)isX' -> 'isX'."""
+              rest = strip_parens(signature.strip()[1:])
+              parts = re.findall(r'(\w+)\s*:', rest)
+              if parts:
+                  return ':'.join(parts) + ':'
+              match = re.search(r'\w+', rest)
+              return match.group(0) if match else None
+
+
+          def parse_hooks(source_dir):
+              """Yield (file, line, group, class, selector) for every hooked method (skipping %new)."""
+              hooks = []
+              for path in sorted(glob.glob(os.path.join(source_dir, '**', '*.x'), recursive=True)):
+                  with open(path, encoding='utf-8', errors='replace') as f:
+                      lines = f.read().replace('\r\n', '\n').split('\n')
+                  stack, group, new_pending = [], None, False
+                  i = 0
+                  while i < len(lines):
+                      line = lines[i]
+                      stripped = line.strip()
+                      m = OPEN_RE.match(line)
+                      if m:
+                          kind, name = m.group(1), m.group(2)
+                          stack.append((kind, name))
+                          if kind == 'group':
+                              group = name
+                          i += 1
+                          continue
+                      if re.match(r'^\s*%end\b', line):
+                          if stack:
+                              kind, _ = stack.pop()
+                              if kind == 'group':
+                                  group = None
+                          i += 1
+                          continue
+                      if stripped.startswith('%new'):
+                          new_pending = True
+                          i += 1
+                          continue
+                      if stack and stack[-1][0] == 'hook' and re.match(r'^[-+]\s*\(', line):
+                          signature, j = line, i
+                          while '{' not in signature and ';' not in signature and j + 1 < len(lines) and j - i < 6:
+                              j += 1
+                              signature += ' ' + lines[j].strip()
+                          if not new_pending:
+                              sel = selector_of(signature.split('{')[0])
+                              if sel:
+                                  hooks.append((os.path.relpath(path, source_dir), i + 1, group, stack[-1][1], sel))
+                          new_pending = False
+                          i = j + 1
+                          continue
+                      if stripped and not stripped.startswith('//'):
+                          new_pending = False
+                      i += 1
+              return hooks
+
+
+          def app_version(app_dir):
+              for plist in glob.glob(os.path.join(app_dir, 'Payload', '*.app', 'Info.plist')) + glob.glob(os.path.join(app_dir, 'Info.plist')):
+                  try:
+                      with open(plist, 'rb') as f:
+                          info = plistlib.load(f)
+                      return info.get('CFBundleShortVersionString') or info.get('CFBundleVersion')
+                  except Exception:
+                      pass
+              return 'unknown'
+
+
+          def main():
+              ap = argparse.ArgumentParser()
+              ap.add_argument('app_dir')
+              ap.add_argument('source_dir')
+              ap.add_argument('out_dir')
+              ap.add_argument('--keywords', default='')
+              ap.add_argument('--fail-on-dead', action='store_true')
+              args = ap.parse_args()
+
+              classes, selectors, scanned = scan_app(args.app_dir)
+              if not classes:
+                  sys.exit('No Objective-C class names found: is this a decrypted arm64 IPA?')
+              hooks = parse_hooks(args.source_dir)
+              os.makedirs(args.out_dir, exist_ok=True)
+
+              dead_classes, dead_selectors = {}, []
+              for file, line, group, cls, sel in hooks:
+                  if cls not in classes:
+                      dead_classes.setdefault((cls, file, group), []).append((line, sel))
+                  elif sel not in selectors:
+                      dead_selectors.append((file, line, group, cls, sel))
+
+              for name, values in (('classes.txt', classes), ('selectors.txt', selectors)):
+                  with open(os.path.join(args.out_dir, name), 'w') as f:
+                      f.write('\n'.join(sorted(values)) + '\n')
+              if args.keywords:
+                  rx = re.compile(args.keywords, re.I)
+                  with open(os.path.join(args.out_dir, 'matches.txt'), 'w') as f:
+                      f.write('# classes\n' + '\n'.join(sorted(c for c in classes if rx.search(c))) + '\n')
+                      f.write('\n# selectors\n' + '\n'.join(sorted(s for s in selectors if rx.search(s))) + '\n')
+
+              hooked_classes = {h[3] for h in hooks}
+              lines = [
+                  f'# Hook check against {app_version(args.app_dir)}', '',
+                  f'- Mach-O files scanned: {len(scanned)}',
+                  f'- Classes in the app: {len(classes)}, selectors: {len(selectors)}',
+                  f'- Hooked methods in the source: {len(hooks)} on {len(hooked_classes)} classes',
+                  f'- **Dead classes: {len({k[0] for k in dead_classes})}**, **dead selectors: {len(dead_selectors)}**', '',
+                  'A dead class is in no Mach-O of the app. A dead selector is in none either, but it may be inherited '
+                  'from a system framework. Hooks inside a `%group` are often gated on purpose (older versions only).', '',
+              ]
+              if dead_classes:
+                  lines += ['## Classes not found', '', '| Class | File | Group | Hooked selectors |', '|---|---|---|---|']
+                  for (cls, file, group), items in sorted(dead_classes.items()):
+                      sels = ', '.join(f'`{s}`' for _, s in items[:4]) + (' ...' if len(items) > 4 else '')
+                      lines.append(f'| `{cls}` | {file}:{items[0][0]} | {group or ""} | {sels} |')
+                  lines.append('')
+              if dead_selectors:
+                  lines += ['## Selectors not found (class exists)', '', '| Class | Selector | File | Group |', '|---|---|---|---|']
+                  for file, line, group, cls, sel in dead_selectors[:300]:
+                      lines.append(f'| `{cls}` | `{sel}` | {file}:{line} | {group or ""} |')
+                  if len(dead_selectors) > 300:
+                      lines.append(f'| ... | {len(dead_selectors) - 300} more | | |')
+                  lines.append('')
+              report = '\n'.join(lines) + '\n'
+              with open(os.path.join(args.out_dir, 'hook-report.md'), 'w') as f:
+                  f.write(report)
+              print(report)
+              if args.fail_on_dead and (dead_classes or dead_selectors):
+                  sys.exit(1)
+
+
+          if __name__ == '__main__':
+              main()
+          PY
+          ARGS=(--keywords "${KEYWORDS:-}")
+          if [ "${FAIL_ON_DEAD:-false}" = "true" ]; then ARGS+=(--fail-on-dead); fi
+          python3 .ci/hookcheck.py ipa YouMod/Files report "${ARGS[@]}"
+
+      - name: Add the report to the run summary
+        if: ${{ always() }}
+        run: |
+          if [ -f report/hook-report.md ]; then cat report/hook-report.md >> "$GITHUB_STEP_SUMMARY"; fi
+
+      - name: Upload the report (names only, no binary)
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: hook-report
+          path: report/
+          retention-days: 7
+          if-no-files-found: ignore
