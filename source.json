@@ -12,15 +12,15 @@
       "iconURL": "https://raw.githubusercontent.com/GoulagmanYt/YouMod/HEAD/Icon.png",
       "version": "21.46.3",
       "versionDate": "2026-11-18",
-      "downloadURL": "https://github.com/GoulagmanYt/YouMod/releases/download/youmod-ipa11/YouMod_21.46.3_v2.1.0.ipa",
-      "size": 158452250,
+      "downloadURL": "https://github.com/GoulagmanYt/YouMod/releases/download/youmod-ipa12/YouMod_21.46.3_v2.1.0.ipa",
+      "size": 158452146,
       "versions": [
         {
           "version": "21.46.3",
           "date": "2026-11-18",
           "localizedDescription": "YouTube 21.46.3 + YouMod 2.1.0",
-          "downloadURL": "https://github.com/GoulagmanYt/YouMod/releases/download/youmod-ipa11/YouMod_21.46.3_v2.1.0.ipa",
-          "size": 158452250,
+          "downloadURL": "https://github.com/GoulagmanYt/YouMod/releases/download/youmod-ipa12/YouMod_21.46.3_v2.1.0.ipa",
+          "size": 158452146,
           "minOSVersion": "14.0"
         }
       ]
