@@ -13,9 +13,9 @@ on:
         default: 'main'
 
       ipa_url:
-        description: "URL to the decrypted IPA file"
+        description: "URL to the decrypted IPA file (defaults to the IPA_URL secret)"
         default: ""
-        required: true
+        required: false
         type: string
 
       display_name:
@@ -125,23 +125,17 @@ jobs:
         with:
           exclude_inputs: bundle_id,display_name,youpip,ytuhd,ryd,abconfig,ytweaks,youslider,gonerino,demc,volboost,repo,branch,youquality,ytshare,minimalnav,iosgridview
           
-      - name: Install MEGA downloader
-        if: ${{ startsWith(inputs.ipa_url, 'https://mega.nz/') }}
-        run: brew install megatools
-
-      - name: Download IPA from Mega share link
-        if: ${{ startsWith(inputs.ipa_url, 'https://mega.nz/') }}
+      - name: Download IPA
         env:
-          IPA_URL: ${{ inputs.ipa_url }}
+          IPA_URL: ${{ inputs.ipa_url || secrets.IPA_URL }}
         run: |
-          megadl --no-progress --path youtube.ipa "$IPA_URL"
-
-      - name: Download IPA from direct URL
-        if: ${{ !startsWith(inputs.ipa_url, 'https://mega.nz/') }}
-        env:
-          IPA_URL: ${{ inputs.ipa_url }}
-        run: |
-          wget "$IPA_URL" --quiet --no-verbose -O youtube.ipa
+          test -n "$IPA_URL" || { echo "::error::Missing IPA URL"; exit 1; }
+          if [[ "$IPA_URL" == https://mega.nz/* ]]; then
+            brew install megatools
+            megadl --no-progress --path youtube.ipa "$IPA_URL"
+          else
+            wget "$IPA_URL" --quiet --no-verbose -O youtube.ipa
+          fi
 
       - name: Validate IPA
         run: |
