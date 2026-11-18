@@ -257,6 +257,13 @@ jobs:
                   elif sel not in selectors:
                       dead_selectors.append((file, line, group, cls, sel))
 
+              # Google names a protocol like its class and the concrete class FooImpl. Protocol names sit in the same
+              # section as class names, so a hook on "Foo" can look alive while it matches no class at runtime.
+              twins = {}
+              for file, line, group, cls, sel in hooks:
+                  if cls in classes and cls + 'Impl' in classes:
+                      twins.setdefault((cls, file, group), []).append(sel)
+
               for name, values in (('classes.txt', classes), ('selectors.txt', selectors)):
                   with open(os.path.join(args.out_dir, name), 'w') as f:
                       f.write('\n'.join(sorted(values)) + '\n')
@@ -273,7 +280,8 @@ jobs:
                   f'- Classes in the app: {len(classes)}, selectors: {len(selectors)}',
                   f'- Hooked methods in the source: {len(hooks)} on {len(hooked_classes)} classes',
                   f'- **Dead classes: {len({k[0] for k in dead_classes})}**, **dead selectors: {len(dead_selectors)}**',
-                  f'- Apple framework classes hooked (not checked): {len(system_classes)}', '',
+                  f'- Apple framework classes hooked (not checked): {len(system_classes)}',
+                  f'- Hooked names that also exist as <Name>Impl (possible protocol): {len({k[0] for k in twins})}', '',
                   'A dead class is in no Mach-O of the app. A dead selector is in none either, but it may be inherited '
                   'from a system framework. Hooks inside a `%group` are often gated on purpose (older versions only).', '',
               ]
@@ -289,6 +297,14 @@ jobs:
                       lines.append(f'| `{cls}` | `{sel}` | {file}:{line} | {group or ""} |')
                   if len(dead_selectors) > 300:
                       lines.append(f'| ... | {len(dead_selectors) - 300} more | | |')
+                  lines.append('')
+              if twins:
+                  lines += ['## Possible protocol names (a "<Name>Impl" class also exists)', '',
+                            'If the name is a protocol, the hook matches no class: hook the Impl class instead.', '',
+                            '| Name | File | Group | Hooked selectors |', '|---|---|---|---|']
+                  for (cls, file, group), sels in sorted(twins.items())[:150]:
+                      shown = ', '.join(f'`{x}`' for x in sels[:3]) + (' ...' if len(sels) > 3 else '')
+                      lines.append(f'| `{cls}` | {file} | {group or ""} | {shown} |')
                   lines.append('')
               report = '\n'.join(lines) + '\n'
               with open(os.path.join(args.out_dir, 'hook-report.md'), 'w') as f:
