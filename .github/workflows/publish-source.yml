@@ -31,6 +31,26 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       TAG: ${{ inputs.tag || format('youmod-ipa{0}', github.event.workflow_run.run_number) }}
     steps:
+      - name: Delete previous releases
+        run: |
+          set -euo pipefail
+          echo "Keeping target release: $TAG"
+          RELEASES=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate)
+          
+          # Delete all older releases (drafts and published)
+          echo "$RELEASES" | jq -r ".[] | select(.tag_name != \"$TAG\") | .id" | while read -r id; do
+            [ -n "$id" ] || continue
+            echo "Deleting release ID: $id"
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$id" || true
+          done
+
+          # Delete leftover git tags for those releases
+          echo "$RELEASES" | jq -r ".[] | select(.tag_name != \"$TAG\") | .tag_name" | while read -r tag; do
+            [ -n "$tag" ] || continue
+            echo "Deleting git tag: $tag"
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$tag" 2>/dev/null || true
+          done
+
       - name: Publish the draft release
         run: |
           set -euo pipefail
