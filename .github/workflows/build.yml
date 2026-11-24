@@ -21,7 +21,7 @@ concurrency:
 jobs:
   build:
     name: Build YouMod
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     permissions:
       contents: write
     env:
@@ -38,7 +38,6 @@ jobs:
 
       - name: Install dependencies
         run: |
-          eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
           brew install make ldid gnu-sed autoconf automake libtool pkg-config dpkg
           echo "$(brew --prefix make)/libexec/gnubin" >> $GITHUB_PATH
           echo "THEOS=${{ github.workspace }}/theos" >> $GITHUB_ENV
@@ -68,7 +67,7 @@ jobs:
           theos-sdks-branch: 'main'
 
       - name: Fix Theos od broken pipe issue
-        run: sed -i 's/od -c "$i" | head/od -c "$i" 2>\/dev\/null | head/g' "$THEOS/bin/convert_xml_plist.sh"
+        run: sed -i '' 's/od -c "$i" | head/od -c "$i" 2>\/dev\/null | head/g' "$THEOS/bin/convert_xml_plist.sh" 2>/dev/null || sed -i 's/od -c "$i" | head/od -c "$i" 2>\/dev\/null | head/g' "$THEOS/bin/convert_xml_plist.sh" || true
 
       - name: Stamp version
         run: |

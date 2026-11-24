@@ -121,7 +121,7 @@ concurrency:
 jobs:
   build:
     name: Build IPA with tweaks
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     permissions:
       contents: write
 
@@ -133,10 +133,9 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
-          brew install make ldid gnu-sed autoconf automake libtool pkg-config
-          echo "/home/linuxbrew/.linuxbrew/bin" >> $GITHUB_PATH
+          brew install make ldid gnu-sed autoconf automake libtool pkg-config wget
           echo "$(brew --prefix make)/libexec/gnubin" >> $GITHUB_PATH
+          echo "$(brew --prefix gnu-sed)/libexec/gnubin" >> $GITHUB_PATH
           echo "THEOS=${{ github.workspace }}/theos" >> $GITHUB_ENV
           
       - name: Download IPA
@@ -228,7 +227,7 @@ jobs:
           fi
 
       - name: Fix Theos od broken pipe issue
-        run: sed -i 's/od -c "$i" | head/od -c "$i" 2>\/dev\/null | head/g' "$THEOS/bin/convert_xml_plist.sh"
+        run: sed -i '' 's/od -c "$i" | head/od -c "$i" 2>\/dev\/null | head/g' "$THEOS/bin/convert_xml_plist.sh" 2>/dev/null || sed -i 's/od -c "$i" | head/od -c "$i" 2>\/dev\/null | head/g' "$THEOS/bin/convert_xml_plist.sh" || true
 
       - name: Install cyan
         run: |
@@ -374,7 +373,7 @@ jobs:
         if: ${{ inputs.demc }}
         run: |
           cd DontEatMyContent
-          sed -i 's/-fobjc-arc/-fobjc-arc -fcommon/' Makefile
+          sed -i '' 's/-fobjc-arc/-fobjc-arc -fcommon/' Makefile 2>/dev/null || sed -i 's/-fobjc-arc/-fobjc-arc -fcommon/' Makefile 2>/dev/null || true
           make clean package DEBUG=0 FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
           mv packages/*.deb ${{ github.workspace }}/demc.deb
 
@@ -441,7 +440,7 @@ jobs:
           if [ -f custom_icon.png ]; then
             icon_arg="-k custom_icon.png"
           fi
-          cyan -i youtube.ipa -o YouMod_${{ env.YT_VERSION }}_v${{ env.YOUMOD_VERSION }}.ipa -uwef *.deb -n "${{ inputs.display_name }}" -b ${{ inputs.bundle_id }} $icon_arg
+          cyan -i youtube.ipa -o stage.ipa -uwef *.deb -n "${{ inputs.display_name }}" -b ${{ inputs.bundle_id }} $icon_arg
 
       # The load commands injected by cyan (one per dylib) can exceed the padding of
       # YouTube's Mach-O header (code starts at 0x4000) and overwrite its code -> SIGILL at launch.
