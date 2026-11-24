@@ -67,9 +67,9 @@ jobs:
           else:
               yt, ym, run = "0", "0", str(rel["id"])
 
-          # SideStore compares this value with the version read from the IPA (CFBundleShortVersionString),
-          # they must be strictly identical: so we use the YouTube version alone.
-          version = yt
+          # YouTube + build run number: matches the CFBundleShortVersionString stamped by cyan in ipa.yml (-v "${YT_VERSION}.${GITHUB_RUN_NUMBER}"),
+          # so SideStore detects updates and clears the update badge once installed.
+          version = f"{yt}.{run}"
           url = f"https://github.com/{repo}/releases/download/{quote(rel['tag_name'])}/{quote(asset['name'])}"
           date = rel["published_at"][:10]
           desc = f"YouTube {yt} + YouMod {ym}"

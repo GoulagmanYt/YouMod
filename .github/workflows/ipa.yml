@@ -440,7 +440,7 @@ jobs:
           if [ -f custom_icon.png ]; then
             icon_arg="-k custom_icon.png"
           fi
-          cyan -i youtube.ipa -o stage.ipa -uwef *.deb -n "${{ inputs.display_name }}" -b ${{ inputs.bundle_id }} $icon_arg
+          cyan -i youtube.ipa -o stage.ipa -uwef *.deb -n "${{ inputs.display_name }}" -b ${{ inputs.bundle_id }} -v "${{ env.YT_VERSION }}.${{ github.run_number }}" $icon_arg
 
       # The load commands injected by cyan (one per dylib) can exceed the padding of
       # YouTube's Mach-O header (code starts at 0x4000) and overwrite its code -> SIGILL at launch.
