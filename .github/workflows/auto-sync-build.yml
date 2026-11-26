@@ -67,5 +67,4 @@ jobs:
           test -n "$IPA_URL" || { echo "::error::Missing IPA_URL secret"; exit 1; }
           gh workflow run ipa.yml --repo "$GITHUB_REPOSITORY" --ref "$BRANCH" \
             -f repo="$GITHUB_REPOSITORY" \
-            -f branch="$BRANCH" \
-            -f ipa_url="$IPA_URL"
+            -f branch="$BRANCH"

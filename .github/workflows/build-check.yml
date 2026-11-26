@@ -133,7 +133,9 @@ jobs:
   compile:
     name: Compile the tweak
     needs: static
+    if: ${{ github.event_name != 'push' || github.event.head_commit.author.name != 'github-actions[bot]' }}
     runs-on: macos-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout YouMod
         uses: actions/checkout@v7
@@ -194,7 +196,7 @@ jobs:
           fi
 
       - name: Fix Theos od broken pipe issue
-        run: sed -i '' 's/od -c "$i" | head/od -c "$i" 2>\/dev\/null | head/g' $THEOS/bin/convert_xml_plist.sh || true
+        run: sed -i '' 's/od -c "$i" | head/od -c "$i" 2>\/dev\/null | head/g' "$THEOS/bin/convert_xml_plist.sh" || true
 
       - name: Compile YouMod
         run: |

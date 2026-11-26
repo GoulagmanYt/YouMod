@@ -31,6 +31,15 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       TAG: ${{ inputs.tag || format('youmod-ipa{0}', github.event.workflow_run.run_number) }}
     steps:
+      - name: Publish the draft release
+        run: |
+          set -euo pipefail
+          ID=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+                 --jq ".[] | select(.tag_name==\"$TAG\") | .id" | head -n1)
+          test -n "$ID" || { echo "::error::Release $TAG not found"; exit 1; }
+          gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$ID" \
+            -F draft=false -f make_latest=true > release.json
+
       - name: Delete previous releases
         run: |
           set -euo pipefail
@@ -50,15 +59,6 @@ jobs:
             echo "Deleting git tag: $tag"
             gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$tag" 2>/dev/null || true
           done
-
-      - name: Publish the draft release
-        run: |
-          set -euo pipefail
-          ID=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
-                 --jq ".[] | select(.tag_name==\"$TAG\") | .id" | head -n1)
-          test -n "$ID" || { echo "::error::Release $TAG not found"; exit 1; }
-          gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$ID" \
-            -F draft=false -f make_latest=true > release.json
 
       - name: Prepare sidestore branch
         run: |

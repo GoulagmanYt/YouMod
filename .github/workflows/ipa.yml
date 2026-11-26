@@ -10,7 +10,7 @@ on:
       branch:
         description: 'Branch to build from'
         required: true
-        default: 'main'
+        default: 'pre-release'
 
       ipa_url:
         description: "URL to the decrypted IPA file (defaults to the IPA_URL secret)"
