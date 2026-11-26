@@ -46,6 +46,9 @@
 #import "Headers/YTLabel.h"
 #import "Headers/MLFormat.h"
 #import "Headers/MLQuickMenuVideoQualitySettingFormatConstraint.h"
+#import "Headers/MLABRPolicy.h"
+#import "Headers/HAMDefaultABRPolicy.h"
+#import "Headers/MLHLSStreamSelector.h"
 #import "Headers/YTCommonColorPalette.h"
 #import "Headers/YTIPivotBarSupportedRenderers.h"
 #import "Headers/YTIBrowseRequest.h"
@@ -315,6 +318,7 @@
 #define CaptionTrack @"YouModCaptionTrack"
 #define CaptionTrackLangs @"YouModCaptionTrackLangs"
 #define DisablesCaptionTrack @"YouModDisablesCaptionTrack"
+#define DisablesHDR @"YouModDisablesHDR"
 #define AutoSpeedIndex @"YouModAutoSpeedIndex"
 #define ShortsAutoSpeedIndex @"YouModShortsAutoSpeedIndex"
 #define HoldToSpeedEnabled @"YouModHoldToSpeedEnabled"
@@ -418,6 +422,7 @@
 #define HideTabIndi @"YouModHideTabIndicators"
 #define HideTabLabels @"YouModHideTabLabels"
 #define UseFrostedTabBar @"YouModUseFrostedTabBar"
+#define HiddenPivotBar @"YouModHiddenPivotBar"
 // Miscellaneous
 #define LiquidGlass @"YouModEnablesLiquidGlass"
 #define BackgroundPlayback @"YouModEnablesBackgroundPlayback"
@@ -947,7 +952,7 @@ extern BOOL YMHostBundleSupportsLiquidGlass(void);
 extern void YouModApplyLiquidGlassToView(UIView *view, BOOL arg);
 extern void YouModApplyFrostedPanelBackgroundToView(UIView *view);
 
-// YMPivotTabBar.x — native UITabBar overlay (iOS 26 Liquid Glass) on the pivot bar.
+// Pivot bar and player declarations.
 #import <UIKit/UITabBar.h>
 
 @interface YTFloatingPivotBarView : UIView
@@ -960,26 +965,13 @@ extern void YouModApplyFrostedPanelBackgroundToView(UIView *view);
 - (void)setShouldBrowseViewExtendToBottomEdge:(BOOL)edge;
 @end
 
-@protocol YMPivotBarViewProto <NSObject>
-@property (nonatomic, strong, readonly) YTIPivotBarRenderer *renderer;
-@property (nonatomic, strong, readonly) NSArray *itemViews;
+// Player.x — YouTube's own long-press ("Speedmaster") driving hold-to-speed.
+@interface YTSpeedmasterController : NSObject
+- (void)speedmasterDidLongPressWithRecognizer:(id)recognizer;
+- (id)parentResponder;
 @end
 
-@interface YTPivotBarItemView (YMPivotGlass)
-- (NSString *)pivotIdentifier;
-- (UIImageView *)navigationButtonImageView;
-@end
-
-@interface YMPivotGlassTabBar : NSObject <UITabBarDelegate, UIContextMenuInteractionDelegate>
-+ (BOOL)isActive;
-+ (void)attachToBarView:(UIView *)barView;
-+ (void)refreshIcons;
-+ (void)selectPivotIdentifier:(NSString *)pivotID;
-+ (void)setBadgeCount:(id)count forPivotIdentifier:(NSString *)pivotID;
-+ (void)setPivotBarViewController:(YTPivotBarViewController *)vc;
-@end
-
-// Tabbar.x — pivot identifier of a bar item (standard or icon-only renderer).
-extern NSString *YMPivotIDOfItem(YTIPivotBarSupportedRenderers *item);
+// Tabbar.x — the long-press menu of the first tab (Manage Tabs, …).
+extern UIMenu *YMTabContextMenu(UIView *anchor);
 // Tabbar.x — presents the Download library like a real tap; YES when the item is that tab.
 extern BOOL YMShowLibraryForItem(YTPivotBarViewController *pivotBar, id item);

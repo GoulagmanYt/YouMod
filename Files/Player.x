@@ -560,6 +560,10 @@ void YouModApplyPrevNextReplacement(YTMainAppControlsOverlayView *overlay) {
     if (extraTimeRange.location != NSNotFound) {
         baseText = [baseText substringToIndex:extraTimeRange.location];
     }
+    NSRange sleepRange = [baseText rangeOfString:@" \u263D "];
+    if (sleepRange.location != NSNotFound) {
+        baseText = [baseText substringToIndex:sleepRange.location];
+    }
     NSRange sbRange = [baseText rangeOfString:@" ("];
     if (sbRange.location != NSNotFound) {
         baseText = [baseText substringToIndex:sbRange.location];
@@ -568,6 +572,11 @@ void YouModApplyPrevNextReplacement(YTMainAppControlsOverlayView *overlay) {
     NSMutableString *newLabelText = [NSMutableString stringWithString:baseText];
     if (IS_ENABLED(SBShowDuration) && safeSBTimeRemaining.length > 0) {
         [newLabelText appendFormat:@" (%@)", safeSBTimeRemaining];
+    }
+    // ☽ + remaining sleep timer time, after the SponsorBlock part (fullscreen only).
+    if (ovcon.isFullscreen && YMSleepTimerIsActive()) {
+        NSString *sleepRemaining = YMSleepTimerRemainingText();
+        if (sleepRemaining.length > 0) [newLabelText appendFormat:@" \u263D %@", sleepRemaining];
     }
     if (IS_ENABLED(ShowExtraTimeRemaining) && safeRemainingTimeText.length > 0) {
         [newLabelText appendFormat:@" • %@", safeRemainingTimeText];
@@ -581,7 +590,7 @@ void YouModApplyPrevNextReplacement(YTMainAppControlsOverlayView *overlay) {
 }
 - (void)updateCurrentTimeTitleLabel {
     %orig;
-    if (!IS_ENABLED(ShowExtraTimeRemaining) && !IS_ENABLED(SBShowDuration)) return;
+    if (!IS_ENABLED(ShowExtraTimeRemaining) && !IS_ENABLED(SBShowDuration) && !YMSleepTimerIsActive()) return;
     YTMainAppVideoPlayerOverlayViewController *ovcon = (YTMainAppVideoPlayerOverlayViewController *)self._viewControllerForAncestor;
     if (![ovcon isKindOfClass:%c(YTMainAppVideoPlayerOverlayViewController)]) return;
     YTPlayerViewController *pvc = (YTPlayerViewController *)ovcon.parentViewController;
@@ -689,6 +698,54 @@ void YouModApplyPrevNextReplacement(YTMainAppControlsOverlayView *overlay) {
 - (void)setPaidContentWithPlayerData:(id)data { if (!IS_ENABLED(HidePaidPromoOverlay)) %orig; }
 %end
 
+// Seek on feed — swipe left/right to scrub on the inline feed player (SeekOnFeed).
+static float YMSeekStartValue;
+
+%hook YTInlineMutedPlaybackPlayerOverlayView
+%property (nonatomic, retain) UIPanGestureRecognizer *ymSeekPan;
+- (void)didMoveToWindow {
+    %orig;
+    if (self.window && !self.ymSeekPan && IS_ENABLED(SeekOnFeed)) {
+        self.ymSeekPan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(YouModHandleSeekPan:)];
+        self.ymSeekPan.delegate = (id<UIGestureRecognizerDelegate>)self;
+        self.ymSeekPan.cancelsTouchesInView = NO;
+        [self addGestureRecognizer:self.ymSeekPan];
+    }
+}
+%new(B@:@)
+- (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)gesture {
+    if (gesture != self.ymSeekPan) return YES;
+    CGPoint velocity = [(UIPanGestureRecognizer *)gesture velocityInView:self];
+    return fabs(velocity.x) > fabs(velocity.y);
+}
+%new(v@:@)
+- (void)YouModHandleSeekPan:(UIPanGestureRecognizer *)gesture {
+    UISlider *slider = self.scrubberView.scrubber;
+    if (!slider) return;
+    float duration = slider.maximumValue - slider.minimumValue;
+    if (duration <= 0) return;
+    UIGestureRecognizerState state = gesture.state;
+    if (state == UIGestureRecognizerStateBegan) {
+        YMSeekStartValue = slider.value;
+        [slider sendActionsForControlEvents:UIControlEventTouchDown];
+    } else if (state != UIGestureRecognizerStateChanged &&
+        state != UIGestureRecognizerStateEnded &&
+        state != UIGestureRecognizerStateCancelled) return;
+    CGFloat dx = [gesture translationInView:self].x;
+    float value = YMSeekStartValue + dx / self.bounds.size.width * duration;
+    value = fminf(fmaxf(value, slider.minimumValue), slider.maximumValue);
+    slider.value = value;
+    if (state == UIGestureRecognizerStateChanged) {
+        [slider sendActionsForControlEvents:UIControlEventValueChanged];
+    } else if (state == UIGestureRecognizerStateEnded) {
+        [slider sendActionsForControlEvents:UIControlEventValueChanged];
+        [slider sendActionsForControlEvents:UIControlEventTouchUpInside]; // lets the scrub state machine commit + exit
+    } else {
+        [slider sendActionsForControlEvents:UIControlEventTouchCancel];
+    }
+}
+%end
+
 // Moved out of the overlay VC in 20.21.6; the hook above covers 19.x.
 %hook YTPaidContentViewController
 - (void)showPaidContentRenderer:(id)renderer { if (!IS_ENABLED(HidePaidPromoOverlay)) %orig; }
@@ -714,11 +771,11 @@ void YouModApplyPrevNextReplacement(YTMainAppControlsOverlayView *overlay) {
 
 // Automatically mute video if user wants to
 %hook YTInlineMutedPlaybackStateController // 19.x-20.x
-- (void)setInlinePlaybackUnmutedAtStart:(BOOL)arg { %orig(IS_ENABLED(AutoFeedMute) || sStartupVideoPlaying ? NO : arg); }
+- (BOOL)inlinePlaybackUnmutedAtStart { return IS_ENABLED(AutoFeedMute) || sStartupVideoPlaying ? NO : %orig; }
 %end
 
 %hook YTInlineMutedPlaybackStateControllerImpl // 21.x+
-- (void)setInlinePlaybackUnmutedAtStart:(BOOL)arg { %orig(IS_ENABLED(AutoFeedMute) || sStartupVideoPlaying ? NO : arg); }
+- (BOOL)inlinePlaybackUnmutedAtStart { return IS_ENABLED(AutoFeedMute) || sStartupVideoPlaying ? NO : %orig; }
 %end
 
 // Exit Fullscreen on Finish
@@ -985,7 +1042,9 @@ static BOOL YMWatchTransitionIsFromShorts(YTWatchController *watchController) {
 // setPlayerResponse: sets this directly, so the YTAnnotationsViewController hooks miss it.
 - (void)setFeaturedChannelWatermarkImageView:(id)arg { if (!IS_ENABLED(HideWaterMark)) %orig; }
 - (void)setLongPressGestureRecognizer:(UILongPressGestureRecognizer *)arg {
-    if (IS_ENABLED(HoldToSpeedEnabled) || IS_ENABLED(DisablesLongHold)) return;
+    // Keep YouTube's long-press installed: its Speedmaster handler drives hold-to-speed.
+    if (IS_ENABLED(DisablesLongHold)) return;
+    else if (IS_ENABLED(HoldToSpeedEnabled) && arg) arg.minimumPressDuration = 0.3;
     %orig;
 }
 // Remove Dark Background in Overlay
@@ -1264,15 +1323,23 @@ static BOOL YMWatchTransitionIsFromShorts(YTWatchController *watchController) {
             playerViewController.YouModTapGesture.delegate = playerViewController;
             [pv addGestureRecognizer:playerViewController.YouModTapGesture];
         }
-        if (!playerViewController.YouModHoldGesture && IS_ENABLED(HoldToSpeedEnabled) && !IS_ENABLED(DisablesLongHold)) {
-            playerViewController.YouModHoldGesture = [[UILongPressGestureRecognizer alloc] initWithTarget:playerViewController action:@selector(YouModHoldToSpeed:)];
-            playerViewController.YouModHoldGesture.minimumPressDuration = 0.3;
-            playerViewController.YouModHoldGesture.numberOfTouchesRequired = 1;
-            playerViewController.YouModHoldGesture.delegate = playerViewController;
-            [pv addGestureRecognizer:playerViewController.YouModHoldGesture];
-        }
     }
     %orig;
+}
+%end
+
+// YouTube's own long-press ("Speedmaster") drives hold-to-speed — its activation
+// flow (isSpeedmasterActivated etc.) runs untouched via %orig; only the speed and
+// the dialog (toast) are ours. Player VC = parentResponder.parentViewController.
+static BOOL sYMHoldSpeedActive = NO;
+
+%hook YTSpeedmasterController
+- (void)speedmasterDidLongPressWithRecognizer:(UILongPressGestureRecognizer *)recognizer {
+    if (IS_ENABLED(HoldToSpeedEnabled) && !IS_ENABLED(DisablesLongHold)) {
+        UIViewController *host = (UIViewController *)self.parentResponder;
+        YTPlayerViewController *player = (YTPlayerViewController *)host.parentViewController;
+        [player YouModHoldToSpeed:recognizer];
+    } else %orig;
 }
 %end
 
@@ -1282,12 +1349,11 @@ static BOOL YMWatchTransitionIsFromShorts(YTWatchController *watchController) {
 %property (nonatomic, retain) UILabel *YouModGestureHUD;
 %property (nonatomic, strong) UIView *YouModSpeedToastView;
 %property (nonatomic, strong) UILabel *YouModSpeedToastLabel;
-%property (nonatomic, retain) UILongPressGestureRecognizer *YouModHoldGesture;
 %property (nonatomic, strong) NSArray *YouModGesturesSuspendedByHold;
 %new
 - (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)gestureRecognizer {
     if (gestureRecognizer == self.YouModPanGesture) {
-        if (self.YouModHoldGesture && (self.YouModHoldGesture.state == UIGestureRecognizerStateBegan || self.YouModHoldGesture.state == UIGestureRecognizerStateChanged)) {
+        if (sYMHoldSpeedActive) {
             return NO;
         }
 
@@ -1546,7 +1612,7 @@ static BOOL YMWatchTransitionIsFromShorts(YTWatchController *watchController) {
 }
 %new
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)otherGestureRecognizer {
-    if (gestureRecognizer == self.YouModPanGesture || gestureRecognizer == self.YouModHoldGesture) return NO;
+    if (gestureRecognizer == self.YouModPanGesture) return NO;
     return YES;
 }
 // Pause using Two fingers
@@ -1571,8 +1637,7 @@ static BOOL YMWatchTransitionIsFromShorts(YTWatchController *watchController) {
 }
 %new
 - (void)YouModSetAutoSpeed {
-    if (self.YouModHoldGesture 
-        && (self.YouModHoldGesture.state == UIGestureRecognizerStateBegan || self.YouModHoldGesture.state == UIGestureRecognizerStateChanged)) {
+    if (sYMHoldSpeedActive) {
         return;
     }
     if (IS_ENABLED(GlobalSpeedLocked)) {
@@ -1714,7 +1779,6 @@ static BOOL YMWatchTransitionIsFromShorts(YTWatchController *watchController) {
     static CGPoint startLocation;
     static BOOL initialLockState;
     static BOOL isPendingToggle;
-    static BOOL holdGestureActive = NO;
 
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
 
@@ -1745,10 +1809,10 @@ static BOOL YMWatchTransitionIsFromShorts(YTWatchController *watchController) {
             [self setPlaybackRate:speed];
             [self YouModShowSpeedToast:speed isLocked:YES];
         }
-        holdGestureActive = YES;
+        sYMHoldSpeedActive = YES;
         [YouModPlayerGestures suspendGesturesForHold:self hold:gesture];
     } else if (gesture.state == UIGestureRecognizerStateChanged) {
-        if (!holdGestureActive || !IS_ENABLED(LockSpeed)) return;
+        if (!sYMHoldSpeedActive || !IS_ENABLED(LockSpeed)) return;
         
         CGPoint currentLocation = [gesture locationInView:self.playerView];
         CGFloat dragDistanceY = currentLocation.y - startLocation.y;
@@ -1788,7 +1852,7 @@ static BOOL YMWatchTransitionIsFromShorts(YTWatchController *watchController) {
                gesture.state == UIGestureRecognizerStateFailed) {
 
         // If Began never ran, nothing was applied; touching the rate now would flash the speed on touch-up
-        if (!holdGestureActive) return;
+        if (!sYMHoldSpeedActive) return;
 
         BOOL finalLockState = initialLockState;
         if (gesture.state == UIGestureRecognizerStateEnded || (gesture.state == UIGestureRecognizerStateCancelled && isPendingToggle)) {
@@ -1805,7 +1869,7 @@ static BOOL YMWatchTransitionIsFromShorts(YTWatchController *watchController) {
             [self setPlaybackRate:targetRate];
         }
         isPendingToggle = NO;
-        holdGestureActive = NO;
+        sYMHoldSpeedActive = NO;
         [self YouModHideSpeedToast];
     }
 }

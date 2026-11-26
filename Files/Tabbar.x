@@ -5,6 +5,7 @@ extern UIViewController *YouModAppViewController();
 static NSString *const kYMLibraryPivotIdentifier = @"YouModDownloadLibrary";
 
 // Tab icons
+
 %hook YTAppPivotBarItemStyle
 - (UIImage *)pivotBarItemIconImageWithIconType:(int)type color:(UIColor *)color useNewIcons:(BOOL)isNew selected:(BOOL)isSelected {
     if (type >= 1 && type <= 19) {
@@ -112,7 +113,7 @@ static BOOL isGestureRegistered = NO;
 
 static YTIPivotBarSupportedRenderers *YouModNewTab(NSString *pivotID, NSString *title, int it) {
     YTIPivotBarSupportedRenderers *tab = [%c(YTIPivotBarSupportedRenderers) new];
-    if (isNewYTTabbarLayout && ![YMHelpers isPad] && [tab.pivotBarIconOnlyItemRenderer respondsToSelector:@selector(setBackgroundStyle:)]) {
+    if (isNewYTTabbarLayout && [tab.pivotBarIconOnlyItemRenderer respondsToSelector:@selector(setBackgroundStyle:)]) {
         tab.pivotBarIconOnlyItemRenderer.pivotIdentifier = pivotID;
         tab.pivotBarIconOnlyItemRenderer.navigationEndpoint.browseEndpoint.browseId = pivotID;
         tab.pivotBarIconOnlyItemRenderer.icon.iconType = it;
@@ -219,7 +220,6 @@ static void YMApplyTabLayout(YTIPivotBarRenderer *renderer) {
 - (void)setRenderer:(YTIPivotBarRenderer *)renderer {
     YMApplyTabLayout(renderer);
     %orig(renderer);
-    [YMPivotGlassTabBar attachToBarView:self];
 }
 %end
 
@@ -281,46 +281,59 @@ static void YMAttachTabMenu(YTPivotBarItemView *view) {
 %new
 - (UIContextMenuConfiguration *)contextMenuInteraction:(UIContextMenuInteraction *)interaction configurationForMenuAtLocation:(CGPoint)location {
     return [UIContextMenuConfiguration configurationWithIdentifier:nil previewProvider:nil actionProvider:^UIMenu * _Nullable(NSArray<UIMenuElement *> * _Nonnull suggestedActions) {
-        UIAction *whitelistAction = nil;
-        if (IS_ENABLED(SBEnabled)) {
-            whitelistAction = [UIAction actionWithTitle:LOC(@"SB_WHITELIST_MANAGE")
-                                                 image:[UIImage systemImageNamed:@"shield"]
-                                            identifier:nil
-                                               handler:^(__kindof UIAction * _Nonnull action) {
-                YMSBPresentWhitelistManager();
-            }];
-        }
-        UIAction *tabBarAction = [UIAction actionWithTitle:LOC(@"MANAGE_TABS")
-                                                     image:[UIImage systemImageNamed:@"dock.rectangle"]
-                                                identifier:nil
-                                                   handler:^(__kindof UIAction * _Nonnull action) {
-            YMPresentTabOrder(nil);
-        }];
-        UIAction *openLinkAction = [UIAction actionWithTitle:LOC(@"OPEN_LINK")
-                                               image:[UIImage systemImageNamed:@"link"]
-                                          identifier:nil
-                                             handler:^(__kindof UIAction * _Nonnull action) {
-            UIViewController *topVC = [YMHelpers topViewController:nil];
-            YMOpenLinkFromClipboard(topVC, YES);
-        }];
-        UIAction *sleepTimerAction = nil;
-        NSInteger sleepEntry = INTFORVAL(SleepTimerEntry);
-        if (sleepEntry == 1 || sleepEntry == 3) { // tab bar / both
-            sleepTimerAction = [UIAction actionWithTitle:LOC(@"SLEEP_TIMER")
-                                                   image:[UIImage systemImageNamed:@"moon"]
-                                              identifier:nil
-                                                 handler:^(__kindof UIAction * _Nonnull action) {
-                YMSleepTimerPresentPicker(self);
-            }];
-        }
-        NSMutableArray<UIMenuElement *> *menuChildren = [NSMutableArray array];
-        if (whitelistAction) [menuChildren addObject:whitelistAction];
-        if (sleepTimerAction) [menuChildren addObject:sleepTimerAction];
-        [menuChildren addObjectsFromArray:@[tabBarAction, openLinkAction]];
-        return [UIMenu menuWithTitle:@"" children:menuChildren];
+        return YMTabContextMenu(self);
     }];
 }
 %end
+
+// Menu actions open sheets while the context menu is still dismissing — hold the
+// work for a fixed 0.5s so the sheet pops out cleanly right after.
+static void YMPerformAfterMenuDismiss(dispatch_block_t action) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), action);
+}
+
+// The first tab's long-press items — shared by the UIMenu and the no-icon alert
+// dialog on the glass tab bar. add(title, symbol, handler) builds each menu type.
+void YMTabMenuBuild(UIView *anchor, void (^add)(NSString *title, NSString *symbol, void (^handler)(void))) {
+    if (IS_ENABLED(SBEnabled)) {
+        add(LOC(@"SB_WHITELIST_MANAGE"), @"shield", ^{
+            YMPerformAfterMenuDismiss(^{
+                YMSBPresentWhitelistManager();
+            });
+        });
+    }
+    NSInteger sleepEntry = INTFORVAL(SleepTimerEntry);
+    if (sleepEntry == 1 || sleepEntry == 3) { // tab bar / both
+        add(LOC(@"SLEEP_TIMER"), @"moon", ^{
+            YMPerformAfterMenuDismiss(^{
+                YMSleepTimerPresentPicker(anchor);
+            });
+        });
+    }
+    add(LOC(@"MANAGE_TABS"), @"dock.rectangle", ^{
+        YMPerformAfterMenuDismiss(^{
+            YMPresentTabOrder(nil);
+        });
+    });
+    add(LOC(@"OPEN_LINK"), @"link", ^{
+        YMPerformAfterMenuDismiss(^{
+            UIViewController *topVC = [YMHelpers topViewController:nil];
+            YMOpenLinkFromClipboard(topVC, YES);
+        });
+    });
+}
+
+// The first tab's long-press menu; the glass tab bar presents the same one.
+UIMenu *YMTabContextMenu(UIView *anchor) {
+    NSMutableArray<UIMenuElement *> *children = [NSMutableArray array];
+    YMTabMenuBuild(anchor, ^(NSString *title, NSString *symbol, void (^handler)(void)) {
+        [children addObject:[UIAction actionWithTitle:title
+                                                image:[UIImage systemImageNamed:symbol]
+                                           identifier:nil
+                                              handler:^(__kindof UIAction *action) { handler(); }]];
+    });
+    return [UIMenu menuWithTitle:@"" children:children];
+}
 
 // Startup Tab
 BOOL YMShowLibraryForItem(YTPivotBarViewController *pivotBar, id item) {
@@ -365,7 +378,6 @@ static BOOL isTabSelected = NO;
 }
 - (void)viewDidAppear:(BOOL)animated {
     %orig;
-    [YMPivotGlassTabBar setPivotBarViewController:self];
     sbUpdateOverlayInsetForPivotBar();
     if (IS_ENABLED(ShortsOnly) && !isTabSelected) {
         isTabSelected = YES;
@@ -413,6 +425,14 @@ static BOOL isTabSelected = NO;
 - (BOOL)isFrostedPivotBarPermitted {
     if (INTFORVAL(UseFrostedTabBar) == 1) return YES;
     else if (INTFORVAL(UseFrostedTabBar) == 2) return NO;
+    return %orig;
+}
+%end
+
+%hook YTScrollableNavigationController
+- (BOOL)hidePivotBarOnScroll { 
+    if (INTFORVAL(HiddenPivotBar) == 1) return YES;
+    else if (INTFORVAL(HiddenPivotBar) == 2) return NO;
     return %orig;
 }
 %end
